@@ -30,10 +30,20 @@
   };
 
   function threshold(run, k) {
-    var t = k <= 7 ? 100 * Math.pow(2.4, k - 1) : 100 * Math.pow(2.4, 6) * Math.pow(2.5, k - 7);
-    if (k === 1) t = 80;
-    if (run.cards.frugal) t *= 0.65;
-    return Math.round(t / 10) * 10;
+    // Stages 1–6: gentle ramp. Stage 7 is boss (threshold unused).
+    // Endless (k>=8): start from stage-6 pace ×1.8 per wave — old formula jumped to ~47k
+    // on the first endless stage and soft-locked normal builds.
+    var t;
+    if (k === 7) return 0; // boss is HP-based, not score-gated
+    if (k <= 1) t = 80;
+    else if (k <= 6) t = 100 * Math.pow(2.4, k - 1);
+    else {
+      var wave = k - 7; // 1, 2, 3...
+      var base = 100 * Math.pow(2.4, 5); // ≈7960, same as stage 6
+      t = base * Math.pow(1.8, wave);
+    }
+    if (run.cards && run.cards.frugal) t *= 0.65;
+    return Math.max(10, Math.round(t / 10) * 10);
   }
 
   function newRun(seed, opts) {
@@ -255,7 +265,8 @@
     var boss = run.bricks.filter(function (b) { return b.type === "boss"; })[0];
     if (run.stage === 7 && !boss) { return winBoss(run); }
     // drop
-    var drops = 1 + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 2 === 0 ? 1 : 0);
+    // Endless: double-drop every 3rd shot (was every 2nd — too harsh with high HP)
+    var drops = 1 + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 3 === 0 ? 1 : 0);
     for (var d = 0; d < drops; d++) {
       run.bricks.forEach(function (b) { b.r++; });
       spawnRow(run, 0);
@@ -287,12 +298,20 @@
   function clearStage(run, cashOut) {
     var gain = 0, mark;
     if (cashOut) { gain = 3 * run.shotsLeft; mark = "🟩"; }
-    else { var ex = run.score - run.threshold; gain = Math.min(12, Math.floor(ex / run.threshold * 6)); mark = run.greedy ? "🟨" : "🟥"; }
+    else {
+      var thr = Math.max(1, run.threshold || 1);
+      var ex = run.score - run.threshold;
+      gain = Math.min(12, Math.floor(ex / thr * 6));
+      if (!isFinite(gain) || gain < 0) gain = 0;
+      mark = run.greedy ? "🟨" : "🟥";
+    }
     run.coins += gain;
     run.marks.push(mark);
     run.ev.push({ t: "clear", coins: gain, stage: run.stage });
     run.stage++;
     run.offer = makeOffer(run); run.reroll = 2;
+    // Never soft-lock on an empty pick: if pool exhausted, skip straight into next stage
+    if (!run.offer || !run.offer.length) { run.phase = "pick"; pick(run, null); return; }
     run.phase = "pick";
   }
   function available(run) {
@@ -307,6 +326,8 @@
     var pool = available(run), out = [];
     if (run.stage === 2 && pool.indexOf("split") >= 0 && run.marks.length === 1 && !run.rerolled) { out.push("split"); pool.splice(pool.indexOf("split"), 1); }
     while (out.length < 3 && pool.length) { var i = Math.floor(rnd(run, "rc") * pool.length); out.push(pool.splice(i, 1)[0]); }
+    // Guaranteed fallback so the pick UI never renders zero cards
+    if (!out.length && CARDS.plusball) out.push("plusball");
     return out;
   }
   function doReroll(run) {
@@ -334,15 +355,31 @@
       run.bricks.push({ c: 2, r: 0, cw: 3, ch: 2, hp: hp, max: hp, type: "boss", flash: 0 });
       run.shotsLeft = run.cards.frugal ? 5 : 6;
       run.threshold = 0;
+    } else if (k >= 8) {
+      // Fresh fair board for every endless wave — do not inherit boss debris / empty field
+      refreshBoard(run, 4);
     }
     run.dirty = true; run.phase = "aim";
     run.ev.push({ t: "stage", stage: k });
+  }
+  function refreshBoard(run, rows) {
+    run.bricks = [];
+    for (var r = rows - 1; r >= 0; r--) spawnRow(run, r);
+    run.dirty = true;
   }
   function winBoss(run) {
     run.marks.push("👑"); run.phase = "win"; run.won = true; run.ev.push({ t: "win" });
   }
   function continueEndless(run) {
-    run.endless = true; run.stage = 8; run.offer = makeOffer(run); run.reroll = 2; run.phase = "pick";
+    run.endless = true;
+    run.stage = 8;
+    run.bossRule = null;
+    // Drop leftover boss-fight debris so the upcoming refresh starts clean
+    run.bricks = [];
+    run.dirty = true;
+    run.offer = makeOffer(run); run.reroll = 2;
+    if (!run.offer || !run.offer.length) { run.phase = "pick"; pick(run, null); return; }
+    run.phase = "pick";
   }
   function lose(run, why) {
     run.phase = "over"; run.why = why; run.lostBy = Math.max(0, run.threshold - run.score);
@@ -364,6 +401,7 @@
   var API = { W: W, H: H, COLS: COLS, CW: CW, ROWH: ROWH, TOP: TOP, ROWS: ROWS, LINE_Y: LINE_Y, LAUNCH_Y: LAUNCH_Y, R: R, SPEED: SPEED,
     CARDS: CARDS, BOSS_RULES: BOSS_RULES, newRun: newRun, fire: fire, update: update, preview: preview, decide: decide, pick: pick,
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
-    shareText: shareText, fmtMult: fmtMult, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall };
+    shareText: shareText, fmtMult: fmtMult, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
+    threshold: threshold, VERSION: "3" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

@@ -35,3 +35,6 @@ h2{font-size:28px;margin-bottom:6px}
 .card .ds{font-size:13px;color:#c9c2e8;margin-top:2px}
 pre{white-space:pre-wrap;background:#141126;border-radius:12px;padding:12px;font-size:14px;line-height:1.6;text-align:left;margin:10px 0;font-family:inherit}
 #toast{position:absolute;left:50%;bottom:12%;transform:translateX(-50%);background:#ffd84a;color:#241a00;font-weight:800;padding:10px 18px;border-radius:999px;z-index:9}
+
+.recall{position:absolute;right:12px;bottom:72px;z-index:6;border:none;border-radius:999px;padding:12px 18px;font-size:15px;font-weight:800;color:#241a00;background:#ffd84a;box-shadow:0 4px 0 #b89610;cursor:pointer;touch-action:manipulation}
+.recall:active{transform:translateY(2px)}

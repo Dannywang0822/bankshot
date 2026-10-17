@@ -60,13 +60,28 @@
   }
   $("bDaily").onclick = function () { startRun(true); };
   $("bFree").onclick = function () { startRun(false); };
-  $("bCash").onclick = function () { B.decide(run, true); };
-  $("bGreed").onclick = function () { B.decide(run, false); $("decide").classList.add("hidden"); };
+  $("bCash").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, true); $("decide").classList.add("hidden"); };
+  $("bGreed").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, false); $("decide").classList.add("hidden"); };
   $("bReroll").onclick = function () { if (B.reroll(run)) { tone(660, 0.1, "square", 0.05); renderPick(); } };
   $("bSkip").onclick = function () { $("pick").classList.add("hidden"); B.pick(run, null); };
   $("bAgain").onclick = function () { startRun(!!(run && run.daily)); };
   $("bHome").onclick = showMenu;
-  $("bEndless").onclick = function () { B.continueEndless(run); $("over").classList.add("hidden"); };
+  $("bEndless").onclick = function () {
+    if (!run || run.phase !== "win") return;
+    B.continueEndless(run);
+    $("over").classList.add("hidden");
+    // Force pick UI even if prevPhase edge-case skipped a frame transition
+    setTimeout(function () {
+      if (run && run.phase === "pick") { renderPick(); $("pick").classList.remove("hidden"); }
+      else if (run && run.phase === "aim") { /* empty offer auto-started */ }
+    }, 100);
+  };
+  function showRecall() { var b = $("bRecall"); if (b) b.classList.remove("hidden"); }
+  function hideRecall() { var b = $("bRecall"); if (b) b.classList.add("hidden"); }
+  $("bRecall").onclick = function (e) {
+    e.preventDefault(); e.stopPropagation();
+    if (run && run.phase === "fly" && !run.recalled) { B.recall(run); tone(200, 0.15, "sawtooth", 0.05); hideRecall(); }
+  };
   $("bShare").onclick = function () {
     var txt = B.shareText(run, today) + "\n" + location.href.split("?")[0];
     var done = function () { toast("战绩已复制，去群里晒一下！"); };
@@ -79,34 +94,44 @@
   function renderPick() {
     var p = $("cards"); p.innerHTML = "";
     var kinds = { ball: "弹珠", relic: "遗物", up: "强化" };
-    $("pickTitle").textContent = run.endless && run.stage > 8 ? "无尽 · 第 " + (run.stage - 8) + " 关通过！" : run.endless ? "无尽模式" : "第 " + (run.stage - 1) + " 关通过！";
-    $("pickSub").textContent = "三选一 · 金币 " + run.coins + (run.stage === 7 ? " · 下一关是 Boss！" : "");
-    run.offer.forEach(function (k) {
-      var c = B.CARDS[k], d = document.createElement("div");
+    $("pickTitle").textContent = run.endless && run.stage > 8 ? "无尽 · 第 " + (run.stage - 8) + " 关通过！" : run.endless ? "无尽模式 · 冲高分" : "第 " + (run.stage - 1) + " 关通过！";
+    var hint = "";
+    if (run.stage === 7 && !run.endless) hint = " · 下一关是 Boss！";
+    else if (run.endless && run.stage >= 8) hint = " · 下一关目标 " + B.threshold(run, run.stage).toLocaleString() + " 分";
+    $("pickSub").textContent = "三选一 · 金币 " + run.coins + hint;
+    var offer = run.offer || [];
+    if (!offer.length) p.innerHTML = '<p class="sub">没有新卡可拿，点击跳过继续</p>';
+    offer.forEach(function (k) {
+      var c = B.CARDS[k]; if (!c) return;
+      var d = document.createElement("div");
       d.className = "card " + c.kind;
       d.innerHTML = '<div class="ic">' + c.icon + '</div><div><div class="nm">' + c.name + '<span class="kd">' + kinds[c.kind] + '</span></div><div class="ds">' + c.desc + "</div></div>";
-      d.onclick = function () { tone(880, 0.12, "triangle", 0.07); $("pick").classList.add("hidden"); B.pick(run, k); };
+      d.onclick = function () { tone(880, 0.12, "triangle", 0.07); $("pick").classList.add("hidden"); hideRecall(); B.pick(run, k); };
       p.appendChild(d);
     });
-    var rb = $("bReroll"); rb.textContent = "刷新（" + run.reroll + " 金币）"; rb.disabled = run.coins < run.reroll;
+    var rb = $("bReroll"); rb.textContent = "刷新（" + run.reroll + " 金币）"; rb.disabled = run.coins < run.reroll || !offer.length;
   }
 
   function finish() {
-    var won = run.won;
-    $("ovTitle").textContent = won ? (run.endless ? "无尽终结" : "通关！👑") : run.why === "crush" ? "被砖墙压垮了" : "差一点！";
+    var cleared = !!run.won;
+    var endlessDead = cleared && run.endless && run.why;
+    $("ovTitle").textContent = endlessDead ? "无尽终结" : cleared ? "通关！👑" : run.why === "crush" ? "被砖墙压垮了" : "差一点！";
     var sub = "";
-    if (!won && run.why === "score") sub = "还差 <b>" + run.lostBy.toLocaleString() + "</b> 分就过关";
-    else if (!won && run.why === "boss") { var bo = B.bossOf(run); sub = "Boss 还剩 <b>" + (bo ? bo.hp : 0) + "</b> 血"; }
-    else if (!won) sub = "砖块压到了红线（第 " + run.stage + " 关）";
+    if (endlessDead && run.why === "score") sub = "无尽第 " + (run.stage - 7) + " 关还差 <b>" + run.lostBy.toLocaleString() + "</b> 分 · 总分 " + run.total.toLocaleString();
+    else if (endlessDead && run.why === "crush") sub = "无尽第 " + (run.stage - 7) + " 关被压垮 · 总分 " + run.total.toLocaleString();
+    else if (endlessDead) sub = "总分 " + run.total.toLocaleString();
+    else if (!cleared && run.why === "score") sub = "还差 <b>" + run.lostBy.toLocaleString() + "</b> 分就过关";
+    else if (!cleared && run.why === "boss") { var bo = B.bossOf(run); sub = "Boss 还剩 <b>" + (bo ? bo.hp : 0) + "</b> 血"; }
+    else if (!cleared) sub = "砖块压到了红线（第 " + run.stage + " 关）";
     else sub = "总分 " + run.total.toLocaleString();
     $("ovSub").innerHTML = sub;
     $("ovShare").textContent = B.shareText(run, today);
-    $("bEndless").classList.toggle("hidden", !(won && !run.endless));
+    $("bEndless").classList.toggle("hidden", !(cleared && !run.endless && !run.why));
     if (run.total > ld("best", 0)) sv("best", run.total);
     if (run.maxMult > ld("bestMult", 1)) sv("bestMult", run.maxMult);
-    if (won && !run.endless) sv("wins", ld("wins", 0) + 1);
+    if (cleared && !run.endless) sv("wins", ld("wins", 0) + 1);
     if (run.daily) { var db = ld("daily_" + today, null); if (db == null || run.total > db) sv("daily_" + today, run.total); }
-    setTimeout(function () { $("over").classList.remove("hidden"); }, won ? 900 : 700);
+    setTimeout(function () { $("over").classList.remove("hidden"); }, cleared && !endlessDead ? 900 : 700);
   }
 
   // ---------- events -> juice ----------
@@ -263,7 +288,7 @@
   }
   function drawHUD() {
     ctx.fillStyle = "#1a1729"; ctx.fillRect(0, 0, W, B.TOP - 6);
-    var st = run.stage > 7 ? "无尽 " + (run.stage - 7) : run.stage === 7 ? "BOSS" : "第 " + run.stage + "/7 关";
+    var st = run.stage > 7 ? "无尽第 " + (run.stage - 7) + " 关" : run.stage === 7 ? "BOSS" : "第 " + run.stage + "/7 关";
     txt(st, 24, 36, 30, run.stage === 7 ? "#ff3d8b" : "#fff", "left", "900");
     txt("¥ " + run.coins, W - 24, 36, 30, "#ffcc33", "right", "900");
     txt("● " + run.balls, W - 140, 36, 28, "#e6e0ff", "right");
@@ -276,7 +301,7 @@
       rr(24, 76, Math.max(34, (W - 48) * pct), 34, 17); ctx.fillStyle = "#ff3d8b"; ctx.fill();
       txt(B.BOSS_RULES[run.bossRule].name + "：" + (bo ? bo.hp : 0) + " 血", W / 2, 94, 22, "#fff");
     } else {
-      var pr = Math.min(1, run.score / run.threshold);
+      var pr = Math.min(1, run.score / Math.max(1, run.threshold));
       rr(24, 76, W - 48, 34, 17); ctx.fillStyle = "#26213d"; ctx.fill();
       rr(24, 76, Math.max(34, (W - 48) * pr), 34, 17); ctx.fillStyle = pr >= 1 ? "#39e58c" : "#ff7a3d"; ctx.fill();
       txt(run.score.toLocaleString() + " / " + run.threshold.toLocaleString() + (pr >= 1 ? " ✓" : ""), W / 2, 94, 22, "#fff");
@@ -312,7 +337,9 @@
         if (run.phase === "decide") { $("decCoins").textContent = 3 * run.shotsLeft; $("decTxt").innerHTML = "还剩 " + run.shotsLeft + " 发。现在过关，每发换 3 金币；<br>或者继续打，冒着砖块压低的风险刷更多分。"; $("decide").classList.remove("hidden"); }
         else $("decide").classList.add("hidden");
         if (run.phase === "pick") setTimeout(function () { if (run && run.phase === "pick") { renderPick(); $("pick").classList.remove("hidden"); } }, 500);
-        if (run.phase === "over" || run.phase === "win") finish();
+        else if (run.phase !== "pick") $("pick").classList.add("hidden");
+        if (run.phase === "over" || run.phase === "win") { hideRecall(); finish(); }
+        if (run.phase === "fly") showRecall(); else hideRecall();
         prevPhase = run.phase;
       }
     } else prevPhase = null;
