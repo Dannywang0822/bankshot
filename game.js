@@ -48,7 +48,7 @@
     if (daily) { var st = ld("streak", { last: "", n: 0 }); if (st.last !== today) { var y = B.shanghaiDate(new Date(Date.now() - 864e5)); st.n = st.last === y ? st.n + 1 : 1; st.last = today; sv("streak", st); } }
     parts = []; floats = []; big = null; fast = false; aiming = false;
     hideAll();
-    banner = { t: 2.2, a: "第 1 关", b: "目标 " + run.threshold + " 分 · 5 发" };
+    banner = { t: 2.4, a: "第 1 关", b: "先打门闩缺口 · 目标 " + run.threshold + " 分" };
   }
   function hideAll() { ["menu", "decide", "pick", "over"].forEach(function (i) { $(i).classList.add("hidden"); }); }
   function showMenu() {
@@ -94,10 +94,10 @@
   function renderPick() {
     var p = $("cards"); p.innerHTML = "";
     var kinds = { ball: "弹珠", relic: "遗物", up: "强化" };
-    $("pickTitle").textContent = run.endless && run.stage > 8 ? "无尽 · 第 " + (run.stage - 8) + " 关通过！" : run.endless ? "无尽模式 · 冲高分" : "第 " + (run.stage - 1) + " 关通过！";
+    $("pickTitle").textContent = "第 " + (run.stage - 1) + " 关通过！";
     var hint = "";
-    if (run.stage === 7 && !run.endless) hint = " · 下一关是 Boss！";
-    else if (run.endless && run.stage >= 8) hint = " · 下一关目标 " + B.threshold(run, run.stage).toLocaleString() + " 分";
+    if (B.isBossStage(run.stage)) hint = " · 下一关是 Boss！";
+    else hint = " · 下一关目标 " + B.fmtScore(B.threshold(run, run.stage)) + " 分";
     $("pickSub").textContent = "三选一 · 金币 " + run.coins + hint;
     var offer = run.offer || [];
     if (!offer.length) p.innerHTML = '<p class="sub">没有新卡可拿，点击跳过继续</p>';
@@ -117,13 +117,13 @@
     var endlessDead = cleared && run.endless && run.why;
     $("ovTitle").textContent = endlessDead ? "无尽终结" : cleared ? "通关！👑" : run.why === "crush" ? "被砖墙压垮了" : "差一点！";
     var sub = "";
-    if (endlessDead && run.why === "score") sub = "无尽第 " + (run.stage - 7) + " 关还差 <b>" + run.lostBy.toLocaleString() + "</b> 分 · 总分 " + run.total.toLocaleString();
-    else if (endlessDead && run.why === "crush") sub = "无尽第 " + (run.stage - 7) + " 关被压垮 · 总分 " + run.total.toLocaleString();
-    else if (endlessDead) sub = "总分 " + run.total.toLocaleString();
-    else if (!cleared && run.why === "score") sub = "还差 <b>" + run.lostBy.toLocaleString() + "</b> 分就过关";
+    if (endlessDead && run.why === "score") sub = "第 " + run.stage + " 关还差 <b>" + B.fmtScore(run.lostBy) + "</b> 分 · 总分 " + B.fmtScore(run.total);
+    else if (endlessDead && run.why === "crush") sub = "第 " + run.stage + " 关被压垮 · 总分 " + B.fmtScore(run.total);
+    else if (endlessDead) sub = "总分 " + B.fmtScore(run.total);
+    else if (!cleared && run.why === "score") sub = "还差 <b>" + B.fmtScore(run.lostBy) + "</b> 分就过关";
     else if (!cleared && run.why === "boss") { var bo = B.bossOf(run); sub = "Boss 还剩 <b>" + (bo ? bo.hp : 0) + "</b> 血"; }
     else if (!cleared) sub = "砖块压到了红线（第 " + run.stage + " 关）";
-    else sub = "总分 " + run.total.toLocaleString();
+    else sub = "总分 " + B.fmtScore(run.total) + " · 可继续挑战至 1000+ 关";
     $("ovSub").innerHTML = sub;
     $("ovShare").textContent = B.shareText(run, today);
     $("bEndless").classList.toggle("hidden", !(cleared && !run.endless && !run.why));
@@ -137,7 +137,7 @@
   // ---------- events -> juice ----------
   function burst(x, y, col, n, sp) { for (var i = 0; i < n; i++) { var a = Math.random() * 6.283, s = (0.3 + Math.random()) * (sp || 300); parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 100, life: 0.5 + Math.random() * 0.4, col: col, sz: 4 + Math.random() * 6 }); } }
   function fl(x, y, txt, col, sz) { floats.push({ x: x, y: y, txt: txt, col: col || "#fff", sz: sz || 30, life: 0.9 }); }
-  var BCOL = { n: "#5b8cff", gold: "#ffcc33", bomb: "#ff4d5e", plus: "#39e58c", mult: "#b45bff", boss: "#ff3d8b" };
+  var BCOL = { n: "#5b8cff", gold: "#ffcc33", bomb: "#ff4d5e", plus: "#39e58c", mult: "#b45bff", boss: "#ff3d8b", gate: "#e8c36a", armor: "#6a6578", weak: "#ff7ad9" };
   function drain() {
     var now = performance.now();
     run.ev.forEach(function (e) {
@@ -155,12 +155,26 @@
         case "recall": toast("超时，弹珠收回"); break;
         case "shotEnd": fast = false; if (e.pts > 0) shotPop = { pts: e.pts, max: e.max, t: 1.4 }; break;
         case "safety": banner = { t: 2, a: "新手保护", b: "清掉了最低一行（仅一次）" }; flash = 0.4; flashCol = "#39e58c"; break;
+        case "breach":
+          banner = { t: 1.6, a: "破阵！", b: "缺口已开，大片清除就绪" };
+          flash = 0.55; flashCol = "#ffd84a"; shake = Math.max(shake, 16); vib([20, 30, 40]);
+          burst(e.x, e.y, "#ffd84a", 28, 520); fl(e.x, e.y - 20, "破阵！", "#ffd84a", 48);
+          tone(520, 0.12); setTimeout(function () { tone(780, 0.18); }, 80);
+          break;
+        case "weakBreak":
+          fl(e.x, e.y, "破绽！", "#ff7ad9", 40); burst(e.x, e.y, "#ff7ad9", 16, 400);
+          banner = { t: 1.4, a: "破绽击破", b: run.bossRule === "armor" ? "坚甲已破，直击生效" : "再生已抑制" };
+          tone(660, 0.15, "triangle", 0.07);
+          break;
         case "regen": fl(W / 2, B.TOP + 60, "Boss 回血 +8%", "#ff3d8b", 30); break;
         case "clear": tone(523, 0.12); setTimeout(function () { tone(659, 0.12); }, 90); setTimeout(function () { tone(784, 0.2); }, 180); vib([20, 40, 20, 40, 60]); break;
         case "stage":
-          if (e.stage === 7) banner = { t: 3, a: "BOSS · " + B.BOSS_RULES[run.bossRule].name, b: B.BOSS_RULES[run.bossRule].desc + " · " + run.shotsLeft + " 发内击破" };
-          else if (e.stage > 7) banner = { t: 2.2, a: "无尽 第 " + (e.stage - 7) + " 关", b: "目标 " + run.threshold.toLocaleString() + " 分" };
-          else banner = { t: 2.2, a: "第 " + e.stage + " 关", b: "目标 " + run.threshold.toLocaleString() + " 分 · " + run.shotsLeft + " 发" + (e.stage === 6 ? " · 砖块每 3 发多降一行！" : "") };
+          if (B.isBossStage(e.stage)) banner = { t: 3, a: "BOSS · " + B.BOSS_RULES[run.bossRule].name, b: B.BOSS_RULES[run.bossRule].desc + " · " + run.shotsLeft + " 发内击破" };
+          else {
+            var tip = e.stage <= 2 ? " · 先打门闩缺口！" : (e.stage === 6 ? " · 砖块每 3 发多降一行！" : "");
+            var pat = e.pattern && e.pattern !== "boss" ? " · 阵型 " + e.pattern : "";
+            banner = { t: 2.2, a: "第 " + e.stage + " 关", b: "目标 " + B.fmtScore(run.threshold) + " 分 · " + run.shotsLeft + " 发" + tip };
+          }
           break;
         case "win": flash = 1; flashCol = "#ffd84a"; shake = 26; vib([50, 50, 50, 50, 200]); [523, 659, 784, 1047].forEach(function (f, i) { setTimeout(function () { tone(f, 0.3, "triangle", 0.08); }, i * 120); }); for (var i = 0; i < 6; i++) burst(Math.random() * W, 300 + Math.random() * 500, ["#ffd84a", "#ff3d8b", "#3fd4ff"][i % 3], 20, 500); break;
         case "lose": tone(300, 0.5, "sawtooth", 0.07, 80); vib(200); shake = 18; break;
@@ -183,7 +197,7 @@
     if (!aiming || e.pointerId !== activeId) return;
     aiming = false; activeId = null;
     if (e.type === "pointerup" && aimPt && aimPt.ok && run.phase === "aim") {
-      if (B.fire(run, aimA)) { tone(440, 0.08, "square", 0.04, 880); vib(8); if (!ld("tut", false)) { sv("tut", true); tutT = 3.5; } }
+      if (B.fire(run, aimA)) { tone(440, 0.08, "square", 0.04, 880); vib(8); if (!ld("tut", false)) { sv("tut", true); tutT = 3.5; } if (!ld("trapTut", false)) sv("trapTut", true); }
     }
     aimPt = null;
   }
@@ -220,23 +234,35 @@
     // bricks
     run.bricks.forEach(function (b) {
       if (b.hp <= 0) return;
-      var q = B.rect(b), col = BCOL[b.type], f = Math.max(0, b.flash), s = 1 + f * 0.06;
+      var q = B.rect(b), col = BCOL[b.type] || "#5b8cff", f = Math.max(0, b.flash), s = 1 + f * 0.06;
       var warn = b.type !== "boss" && b.r + b.ch - 1 >= B.ROWS - 2;
+      var sealed = b.locked && B.isSealed(run);
       ctx.save(); ctx.translate(q.x + q.w / 2, q.y + q.h / 2); ctx.scale(s, s);
-      ctx.shadowColor = col; ctx.shadowBlur = 14;
+      ctx.shadowColor = b.keystone ? "#ffd84a" : col; ctx.shadowBlur = b.keystone ? 22 : 14;
       var fill = b.type === "n" ? hpCol(b.hp) : col;
+      if (sealed) fill = "#4a4660";
       rr(-q.w / 2, -q.h / 2, q.w, q.h, 12); ctx.fillStyle = "rgba(20,18,31,0.9)"; ctx.fill();
-      ctx.lineWidth = 4; ctx.strokeStyle = warn && Math.sin(performance.now() / 100) > 0 ? "#ff3c50" : fill; ctx.stroke();
-      ctx.globalAlpha = 0.28; ctx.fillStyle = fill; ctx.fill(); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      ctx.lineWidth = b.keystone || b.type === "gate" ? 6 : (b.type === "armor" ? 5 : 4);
+      ctx.strokeStyle = b.keystone ? "#ffd84a" : (warn && Math.sin(performance.now() / 100) > 0 ? "#ff3c50" : fill);
+      if (b.keystone && Math.sin(performance.now() / 140) > 0) ctx.strokeStyle = "#fff3b0";
+      ctx.stroke();
+      ctx.globalAlpha = sealed ? 0.18 : 0.28; ctx.fillStyle = fill; ctx.fill(); ctx.globalAlpha = 1; ctx.shadowBlur = 0;
       if (f > 0) { ctx.globalAlpha = f * 0.7; ctx.fillStyle = "#fff"; ctx.fill(); ctx.globalAlpha = 1; }
       if (b.type === "boss") {
         txt("BOSS", 0, -q.h / 2 + 26, 28, "#ffd0e4"); txt(b.hp + "", 0, 14, 54, "#fff");
         ctx.fillStyle = "#3a1530"; ctx.fillRect(-q.w / 2 + 14, q.h / 2 - 20, q.w - 28, 8); ctx.fillStyle = "#ff3d8b"; ctx.fillRect(-q.w / 2 + 14, q.h / 2 - 20, (q.w - 28) * b.hp / b.max, 8);
+      } else if (b.type === "gate" || b.keystone) {
+        txt("🔒", 0, -10, 22, "#ffd84a"); txt(b.hp + "", 0, 16, 26, "#fff");
+      } else if (b.type === "armor") {
+        txt("盾", 0, -8, 18, "#a8a3b8"); txt(b.hp + "", 0, 14, 24, "#cfcad8");
+      } else if (b.type === "weak") {
+        txt("破绽", 0, -10, 18, "#ff7ad9"); txt(b.hp + "", 0, 14, 26, "#fff");
       } else {
         var icon = { gold: "¥", bomb: "✸", plus: "+1", mult: "×2" }[b.type];
-        if (icon && b.type !== "plus") { txt(icon, -q.w / 2 + 16, -q.h / 2 + 15, 18, col); txt(b.hp + "", 4, 2, 30, "#fff"); }
+        if (sealed) txt("🔐", 0, -8, 16, "#8a849e");
+        if (icon && b.type !== "plus") { txt(icon, -q.w / 2 + 16, -q.h / 2 + 15, 18, col); txt(b.hp + "", 4, 2, 30, sealed ? "#8a849e" : "#fff"); }
         else if (b.type === "plus") txt("+1", 0, 2, 30, col);
-        else txt(b.hp + "", 0, 2, 30, "#fff");
+        else txt(b.hp + "", 0, 2, 30, sealed ? "#8a849e" : "#fff");
       }
       ctx.restore();
     });
@@ -253,6 +279,12 @@
       var sm = B.startMult(run); if (sm > 1) txt("起始倍率 ×" + sm, run.launchX, B.LAUNCH_Y - 40, 20, "#ffb13d");
       if (aiming && aimPt && !aimPt.ok) txt("松手取消", W / 2, B.LAUNCH_Y - 70, 26, "#ff8a9a");
       if (!ld("tut", false) && !aiming && !banner) drawTutorial();
+      else if (!ld("trapTut", false) && B.isSealed(run) && !aiming && !banner) {
+        ctx.fillStyle = "rgba(10,8,20,0.78)"; rr(50, B.LINE_Y + 20, W - 100, 88, 18); ctx.fill();
+        txt("先打缺口 / 门闩 🔒，再清大片", W / 2, B.LINE_Y + 52, 28, "#ffd84a", "center", "900");
+        txt("厚甲墙中间发亮的才是突破口", W / 2, B.LINE_Y + 86, 20, "#c9c2e8");
+      }
+      if (B.isSealed(run)) txt("先破门闩", 24, B.TOP - 18, 18, "#ffd84a", "left");
     } else if (run.phase === "fly" || run.phase === "after") {
       drawLauncher(run.nextX != null ? run.nextX : run.launchX, true);
     }
@@ -288,8 +320,8 @@
   }
   function drawHUD() {
     ctx.fillStyle = "#1a1729"; ctx.fillRect(0, 0, W, B.TOP - 6);
-    var st = run.stage > 7 ? "无尽第 " + (run.stage - 7) + " 关" : run.stage === 7 ? "BOSS" : "第 " + run.stage + "/7 关";
-    txt(st, 24, 36, 30, run.stage === 7 ? "#ff3d8b" : "#fff", "left", "900");
+    var st = B.isBossStage(run.stage) ? ("BOSS · 第 " + run.stage + " 关") : ("第 " + run.stage + " 关");
+    txt(st, 24, 36, 30, B.isBossStage(run.stage) ? "#ff3d8b" : "#fff", "left", "900");
     txt("¥ " + run.coins, W - 24, 36, 30, "#ffcc33", "right", "900");
     txt("● " + run.balls, W - 140, 36, 28, "#e6e0ff", "right");
     // shots pips
@@ -304,7 +336,7 @@
       var pr = Math.min(1, run.score / Math.max(1, run.threshold));
       rr(24, 76, W - 48, 34, 17); ctx.fillStyle = "#26213d"; ctx.fill();
       rr(24, 76, Math.max(34, (W - 48) * pr), 34, 17); ctx.fillStyle = pr >= 1 ? "#39e58c" : "#ff7a3d"; ctx.fill();
-      txt(run.score.toLocaleString() + " / " + run.threshold.toLocaleString() + (pr >= 1 ? " ✓" : ""), W / 2, 94, 22, "#fff");
+      txt(B.fmtScore(run.score) + " / " + B.fmtScore(run.threshold) + (pr >= 1 ? " ✓" : ""), W / 2, 94, 22, "#fff");
     }
     var cards = Object.keys(run.cards).filter(function (k) { return B.CARDS[k].kind !== "up"; }).map(function (k) { return B.CARDS[k].icon; }).join(" ");
     if (cards) txt(cards, 24, 128, 18, "#c9c2e8", "left");
