@@ -135,21 +135,78 @@
   }
 
   // ---------- events -> juice ----------
-  function burst(x, y, col, n, sp) { for (var i = 0; i < n; i++) { var a = Math.random() * 6.283, s = (0.3 + Math.random()) * (sp || 300); parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 100, life: 0.5 + Math.random() * 0.4, col: col, sz: 4 + Math.random() * 6 }); } }
+  function burst(x, y, col, n, sp, life) {
+    if (parts.length > 180) parts.splice(0, parts.length - 140);
+    n = Math.min(n, 28);
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * 6.283, s = (0.3 + Math.random()) * (sp || 300);
+      parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 100, life: (life || 0.5) + Math.random() * 0.4, col: col, sz: 4 + Math.random() * 6, kind: "spark" });
+    }
+  }
+  function ember(x, y, n) {
+    if (parts.length > 180) return;
+    for (var i = 0; i < Math.min(n, 10); i++) {
+      parts.push({ x: x, y: y, vx: (Math.random() - 0.5) * 120, vy: -80 - Math.random() * 220, life: 0.45 + Math.random() * 0.35,
+        col: Math.random() > 0.4 ? "#ff7a3d" : "#ffd84a", sz: 3 + Math.random() * 5, kind: "ember", drag: 0.98 });
+    }
+  }
+  function shards(x, y, n) {
+    if (parts.length > 180) return;
+    for (var i = 0; i < Math.min(n, 14); i++) {
+      var a = Math.random() * 6.283, s = 180 + Math.random() * 320;
+      parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.35 + Math.random() * 0.3,
+        col: Math.random() > 0.5 ? "#3fd4ff" : "#a8f0ff", sz: 3 + Math.random() * 4, kind: "shard" });
+    }
+  }
+  function streak(x, y, vx, vy) {
+    if (parts.length > 180) return;
+    var len = Math.hypot(vx, vy) || 1, nx = vx / len, ny = vy / len;
+    for (var i = 0; i < 6; i++) {
+      parts.push({ x: x - nx * i * 10, y: y - ny * i * 10, vx: nx * 40, vy: ny * 40, life: 0.18 + i * 0.03,
+        col: i < 2 ? "#ffffff" : "#cfe8ff", sz: 5 - i * 0.5, kind: "streak", drag: 1 });
+    }
+  }
   function fl(x, y, txt, col, sz) { floats.push({ x: x, y: y, txt: txt, col: col || "#fff", sz: sz || 30, life: 0.9 }); }
+  function ballTint(e) {
+    if (e && e.fire) return "#ff7a3d";
+    if (e && e.piercer) return "#e8f4ff";
+    if (e && e.split) return "#3fd4ff";
+    return null;
+  }
   var BCOL = { n: "#5b8cff", gold: "#ffcc33", bomb: "#ff4d5e", plus: "#39e58c", mult: "#b45bff", boss: "#ff3d8b", gate: "#e8c36a", armor: "#6a6578", weak: "#ff7ad9" };
   function drain() {
     var now = performance.now();
     run.ev.forEach(function (e) {
       switch (e.t) {
-        case "wall": if (now - lastSnd > 25) { tone(pitch(e.mult), 0.12, "triangle", 0.05); lastSnd = now; } burst(e.x, e.y, multCol(e.mult), 3, 150); break;
-        case "hit": if (e.pts > 0) fl(e.x, e.y - 10, "+" + e.pts, multCol(e.mult), 24 + Math.min(20, Math.log2(e.pts + 1) * 2)); if (now - lastSnd > 20) { tone(pitch(e.mult) * 2, 0.06, "sine", 0.035); lastSnd = now; } break;
-        case "break": burst(e.x, e.y, BCOL[e.type] || "#fff", 12, 380); tone(1400 + Math.random() * 400, 0.05, "square", 0.025); vib(10); shake = Math.max(shake, 4); break;
+        case "wall":
+          if (now - lastSnd > 25) { tone(pitch(e.mult), 0.12, "triangle", 0.05); lastSnd = now; }
+          burst(e.x, e.y, ballTint(e) || multCol(e.mult), e.fire ? 6 : 3, e.fire ? 220 : 150);
+          if (e.fire) ember(e.x, e.y, 4);
+          if (e.split) shards(e.x, e.y, 4);
+          break;
+        case "hit":
+          if (e.pts > 0) fl(e.x, e.y - 10, "+" + e.pts, multCol(e.mult), 24 + Math.min(20, Math.log2(e.pts + 1) * 2));
+          if (now - lastSnd > 20) { tone(pitch(e.mult) * 2, 0.06, "sine", 0.035); lastSnd = now; }
+          if (e.fire) { burst(e.x, e.y, "#ff7a3d", 5, 200); ember(e.x, e.y, 3); }
+          else if (e.piercer) burst(e.x, e.y, "#ffffff", 3, 160);
+          else if (e.split) shards(e.x, e.y, 3);
+          break;
+        case "break":
+          if (e.fire) { burst(e.x, e.y, "#ff7a3d", 16, 420); ember(e.x, e.y, 10); burst(e.x, e.y, "#ffd84a", 8, 280); }
+          else if (e.split) { burst(e.x, e.y, BCOL[e.type] || "#fff", 8, 320); shards(e.x, e.y, 12); }
+          else if (e.piercer) { burst(e.x, e.y, "#e8f4ff", 10, 360); burst(e.x, e.y, BCOL[e.type] || "#fff", 6, 260); }
+          else burst(e.x, e.y, BCOL[e.type] || "#fff", 12, 380);
+          tone(1400 + Math.random() * 400, 0.05, "square", 0.025); vib(10); shake = Math.max(shake, 4); break;
+        case "pierce":
+          streak(e.x, e.y, e.vx || 0, e.vy || -1);
+          burst(e.x, e.y, "#ffffff", 4, 180);
+          if (now - lastSnd > 30) { tone(1800, 0.04, "sine", 0.03); lastSnd = now; }
+          break;
         case "coin": fl(e.x, e.y, "+" + e.n + " ¥", "#ffcc33", 34); tone(1568, 0.15, "triangle", 0.07); setTimeout(function () { tone(2093, 0.18, "triangle", 0.06); }, 70); break;
         case "plus": fl(e.x, e.y, "+1 弹珠", "#39e58c", 34); tone(990, 0.2, "sine", 0.07, 1500); break;
         case "x2": fl(e.x, e.y - 30, "×2!", "#d58bff", 40); tone(700, 0.15, "sawtooth", 0.04, 1400); break;
         case "boom": burst(e.x, e.y, "#ff8a3d", 26, 600); tone(120, 0.35, "sawtooth", 0.12, 40); vib(30); shake = Math.max(shake, 14); break;
-        case "split": burst(e.x, e.y, "#3fd4ff", 8, 250); break;
+        case "split": shards(e.x, e.y, 14); burst(e.x, e.y, "#3fd4ff", 8, 280); tone(1200, 0.08, "triangle", 0.04); break;
         case "clank": if (now - lastSnd > 40) { tone(180, 0.08, "square", 0.04); lastSnd = now; } break;
         case "big": big = { m: e.m, t: 1.3 }; flash = 0.6; flashCol = multCol(e.m); shake = 22; vib([30, 40, 60]); [0, 1, 2, 3].forEach(function (i) { setTimeout(function () { tone(pitch(8 + i * 2 + Math.log2(e.m)) * 1.0, 0.25, "triangle", 0.08); }, i * 70); }); break;
         case "recall": toast("超时，弹珠收回"); break;
@@ -169,8 +226,10 @@
         case "regen": fl(W / 2, B.TOP + 60, "Boss 回血 +5%", "#ff3d8b", 30); break;
         case "clear": tone(523, 0.12); setTimeout(function () { tone(659, 0.12); }, 90); setTimeout(function () { tone(784, 0.2); }, 180); vib([20, 40, 20, 40, 60]); break;
         case "stage":
-          if (B.isBossStage(e.stage)) banner = { t: 3, a: "BOSS · " + B.BOSS_RULES[run.bossRule].name, b: B.BOSS_RULES[run.bossRule].desc + " · " + run.shotsLeft + " 发内击破" };
-          else {
+          if (B.isBossStage(e.stage) && run.bossRule && B.BOSS_RULES[run.bossRule]) {
+            var br = B.BOSS_RULES[run.bossRule];
+            banner = { t: 3, a: "BOSS · " + br.name, b: br.desc + " · " + run.shotsLeft + " 发内击破" };
+          } else {
             var tip = e.stage <= 2 ? " · 先打门闩缺口！" : (e.stage === 6 ? " · 砖块每 3 发多降一行！" : "");
             var pat = e.pattern && e.pattern !== "boss" ? " · 阵型 " + e.pattern : "";
             banner = { t: 2.2, a: "第 " + e.stage + " 关", b: "目标 " + B.fmtScore(run.threshold) + " 分 · " + run.shotsLeft + " 发" + tip };
@@ -288,16 +347,43 @@
     } else if (run.phase === "fly" || run.phase === "after") {
       drawLauncher(run.nextX != null ? run.nextX : run.launchX, true);
     }
-    // balls
+    // balls — type-tinted body/trail
     run.flying.forEach(function (b) {
-      var col = multCol(b.mult);
-      b.trail.push(b.x, b.y); if (b.trail.length > 16) b.trail.splice(0, 2);
-      for (var i = 0; i < b.trail.length; i += 2) { ctx.globalAlpha = (i / b.trail.length) * 0.5; ctx.beginPath(); ctx.arc(b.trail[i], b.trail[i + 1], B.R * (0.4 + i / b.trail.length * 0.6), 0, 6.283); ctx.fillStyle = col; ctx.fill(); }
-      ctx.globalAlpha = 1; ctx.shadowColor = col; ctx.shadowBlur = 16; ctx.beginPath(); ctx.arc(b.x, b.y, B.R, 0, 6.283); ctx.fillStyle = col; ctx.fill(); ctx.shadowBlur = 0;
+      var col = b.fire ? "#ff8a3d" : b.piercer ? "#f2f7ff" : b.split ? "#5be0ff" : multCol(b.mult);
+      if (!b.trail) b.trail = [];
+      b.trail.push(b.x, b.y); if (b.trail.length > (b.fire ? 22 : 16)) b.trail.splice(0, 2);
+      for (var i = 0; i < b.trail.length; i += 2) {
+        var t = i / Math.max(1, b.trail.length - 2);
+        ctx.globalAlpha = t * (b.fire ? 0.65 : 0.5);
+        ctx.beginPath();
+        ctx.arc(b.trail[i], b.trail[i + 1], B.R * (0.35 + t * (b.fire ? 0.85 : 0.6)), 0, 6.283);
+        ctx.fillStyle = b.fire && t > 0.6 ? "#ffd84a" : col; ctx.fill();
+      }
+      ctx.globalAlpha = 1; ctx.shadowColor = col; ctx.shadowBlur = b.fire ? 22 : 16;
+      ctx.beginPath(); ctx.arc(b.x, b.y, B.R + (b.fire ? 2 : 0), 0, 6.283); ctx.fillStyle = col; ctx.fill();
+      if (b.piercer) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+      ctx.shadowBlur = 0;
+      if (b.fire && Math.random() < 0.35 && parts.length < 160) ember(b.x, b.y, 1);
       if (b.mult >= 2 && run.flying.length <= 14) txt("×" + B.fmtMult(b.mult), b.x, b.y - 24, 18, col);
     });
-    // particles
-    for (var k = parts.length - 1; k >= 0; k--) { var p = parts[k]; p.life -= dt; if (p.life <= 0) { parts.splice(k, 1); continue; } p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 900 * dt; ctx.globalAlpha = Math.min(1, p.life * 2); ctx.fillStyle = p.col; ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz); }
+    // particles (cap for mobile)
+    if (parts.length > 200) parts.splice(0, parts.length - 160);
+    for (var k = parts.length - 1; k >= 0; k--) {
+      var p = parts[k]; p.life -= dt; if (p.life <= 0) { parts.splice(k, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.kind === "ember") { p.vy += 200 * dt; if (p.drag) { p.vx *= p.drag; p.vy *= p.drag; } }
+      else if (p.kind === "streak") { /* no gravity */ }
+      else if (p.kind === "shard") { p.vy += 400 * dt; }
+      else p.vy += 900 * dt;
+      ctx.globalAlpha = Math.min(1, p.life * 2);
+      ctx.fillStyle = p.col;
+      if (p.kind === "streak") { ctx.fillRect(p.x - p.sz, p.y - p.sz * 0.35, p.sz * 2.2, p.sz * 0.7); }
+      else if (p.kind === "shard") {
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.life * 8);
+        ctx.beginPath(); ctx.moveTo(0, -p.sz); ctx.lineTo(p.sz * 0.6, p.sz * 0.5); ctx.lineTo(-p.sz * 0.6, p.sz * 0.5); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      } else ctx.fillRect(p.x - p.sz / 2, p.y - p.sz / 2, p.sz, p.sz);
+    }
     ctx.globalAlpha = 1;
     if (floats.length > 40) floats.splice(0, floats.length - 40);
     for (k = floats.length - 1; k >= 0; k--) { var f2 = floats[k]; f2.life -= dt; if (f2.life <= 0) { floats.splice(k, 1); continue; } f2.y -= 60 * dt; ctx.globalAlpha = Math.min(1, f2.life * 2); ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.6)"; ctx.font = "900 " + f2.sz + "px system-ui,sans-serif"; ctx.textAlign = "center"; ctx.strokeText(f2.txt, f2.x, f2.y); txt(f2.txt, f2.x, f2.y, f2.sz, f2.col, "center", "900"); }
@@ -315,8 +401,13 @@
   }
   function hpCol(hp) { return hp <= 2 ? "#5b8cff" : hp <= 5 ? "#3fd4ff" : hp <= 9 ? "#5dff9a" : hp <= 14 ? "#ffd84a" : hp <= 20 ? "#ff8a3d" : "#ff4d8b"; }
   function drawLauncher(x, dim) {
-    ctx.globalAlpha = dim ? 0.4 : 1; ctx.shadowColor = "#fff"; ctx.shadowBlur = 20;
-    ctx.beginPath(); ctx.arc(x, B.LAUNCH_Y, B.R + 4, 0, 6.283); ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    if (!isFinite(x)) x = W / 2;
+    ctx.globalAlpha = dim ? 0.45 : 1;
+    ctx.shadowColor = "#ffd84a"; ctx.shadowBlur = 28;
+    ctx.beginPath(); ctx.arc(x, B.LAUNCH_Y, B.R + 8, 0, 6.283); ctx.fillStyle = "rgba(255,216,74,0.35)"; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, B.LAUNCH_Y, B.R + 4, 0, 6.283); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.strokeStyle = "#ffd84a"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
   }
   function drawHUD() {
     ctx.fillStyle = "#1a1729"; ctx.fillRect(0, 0, W, B.TOP - 6);
@@ -327,11 +418,14 @@
     // shots pips
     var n = run.shotsLeft; for (var i = 0; i < Math.max(n, 0); i++) { ctx.beginPath(); ctx.arc(250 + i * 26, 36, 9, 0, 6.283); ctx.fillStyle = "#ffd84a"; ctx.fill(); }
     txt("发", 250 + Math.max(n, 0) * 26 + 4, 37, 20, "#8e85b8", "left");
-    if (run.stage === 7) {
+    // Only show boss bar when bossRule is set (v6: stage++ happens before pick/startStage;
+    // accessing BOSS_RULES[null] previously crashed the rAF loop → balls "vanished")
+    if (B.isBossStage(run.stage) && run.bossRule && B.BOSS_RULES[run.bossRule]) {
       var bo = B.bossOf(run); var pct = bo ? bo.hp / bo.max : 0;
+      var rule = B.BOSS_RULES[run.bossRule];
       rr(24, 76, W - 48, 34, 17); ctx.fillStyle = "#2a1530"; ctx.fill();
       rr(24, 76, Math.max(34, (W - 48) * pct), 34, 17); ctx.fillStyle = "#ff3d8b"; ctx.fill();
-      txt(B.BOSS_RULES[run.bossRule].name + "：" + (bo ? bo.hp : 0) + " 血", W / 2, 94, 22, "#fff");
+      txt(rule.name + "：" + (bo ? bo.hp : 0) + " 血", W / 2, 94, 22, "#fff");
     } else {
       var pr = Math.min(1, run.score / Math.max(1, run.threshold));
       rr(24, 76, W - 48, 34, 17); ctx.fillStyle = "#26213d"; ctx.fill();
@@ -362,20 +456,24 @@
   var prevPhase = null;
   function frame(t) {
     var dt = Math.min(0.05, (t - (lastT || t)) / 1000); lastT = t;
-    if (run) {
-      if (run.phase === "fly") { var sp = fast ? 3 : run.shotT > 6 ? 2 : 1; B.update(run, dt * sp); }
-      drain();
-      if (run.phase !== prevPhase) {
-        if (run.phase === "decide") { $("decCoins").textContent = 3 * run.shotsLeft; $("decTxt").innerHTML = "还剩 " + run.shotsLeft + " 发。现在过关，每发换 3 金币；<br>或者继续打，冒着砖块压低的风险刷更多分。"; $("decide").classList.remove("hidden"); }
-        else $("decide").classList.add("hidden");
-        if (run.phase === "pick") setTimeout(function () { if (run && run.phase === "pick") { renderPick(); $("pick").classList.remove("hidden"); } }, 500);
-        else if (run.phase !== "pick") $("pick").classList.add("hidden");
-        if (run.phase === "over" || run.phase === "win") { hideRecall(); finish(); }
-        if (run.phase === "fly") showRecall(); else hideRecall();
-        prevPhase = run.phase;
-      }
-    } else prevPhase = null;
-    draw(dt);
+    try {
+      if (run) {
+        if (run.phase === "fly") { var sp = fast ? 3 : run.shotT > 6 ? 2 : 1; B.update(run, dt * sp); }
+        drain();
+        if (run.phase !== prevPhase) {
+          if (run.phase === "decide") { $("decCoins").textContent = 3 * run.shotsLeft; $("decTxt").innerHTML = "还剩 " + run.shotsLeft + " 发。现在过关，每发换 3 金币；<br>或者继续打，冒着砖块压低的风险刷更多分。"; $("decide").classList.remove("hidden"); }
+          else $("decide").classList.add("hidden");
+          if (run.phase === "pick") setTimeout(function () { if (run && run.phase === "pick") { renderPick(); $("pick").classList.remove("hidden"); } }, 500);
+          else if (run.phase !== "pick") $("pick").classList.add("hidden");
+          if (run.phase === "over" || run.phase === "win") { hideRecall(); finish(); }
+          if (run.phase === "fly") showRecall(); else hideRecall();
+          prevPhase = run.phase;
+        }
+      } else prevPhase = null;
+      draw(dt);
+    } catch (err) {
+      try { console.warn("[BANKSHOT] frame error", err); } catch (e2) {}
+    }
     requestAnimationFrame(frame);
   }
   showMenu();

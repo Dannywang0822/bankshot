@@ -344,7 +344,8 @@
   function emit(run) {
     var a = run.angle;
     run.flying.push({ x: run.launchX, y: LAUNCH_Y, vx: Math.cos(a) * SPEED, vy: -Math.sin(a) * SPEED, mult: run.sm,
-      walls: 0, clone: false, pierce: run.cards.pierce ? 2 : 0, ign: null, trail: [] });
+      walls: 0, clone: false, pierce: run.cards.pierce ? 2 : 0, ign: null, trail: [],
+      fire: !!run.cards.fire, split: !!run.cards.split, piercer: !!run.cards.pierce });
     run.queue--;
   }
 
@@ -386,12 +387,14 @@
     run.total = Math.min(SCORE_CAP, run.total + pts);
     run.shotPts = Math.min(HIT_CAP, run.shotPts + pts);
     var rc = rect(b);
-    run.ev.push({ t: "hit", x: ball ? ball.x : rc.x + rc.w / 2, y: ball ? ball.y : rc.y + rc.h / 2, pts: pts, mult: mult, type: b.type });
+    run.ev.push({ t: "hit", x: ball ? ball.x : rc.x + rc.w / 2, y: ball ? ball.y : rc.y + rc.h / 2, pts: pts, mult: mult, type: b.type,
+      fire: !!(ball && ball.fire), split: !!(ball && ball.split), piercer: !!(ball && ball.piercer), src: src });
     if (b.type === "mult" && ball && src === "ball") { addMult(run, ball, 2, true); run.ev.push({ t: "x2", x: ball.x, y: ball.y }); }
     if (b.hp <= 0) {
       b.hp = 0; run.dirty = true; run.bricksBroken++;
       if (ball) addMult(run, ball, 0.5);
-      run.ev.push({ t: "break", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2, type: b.type, w: rc.w, h: rc.h });
+      run.ev.push({ t: "break", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2, type: b.type, w: rc.w, h: rc.h,
+        fire: !!(ball && ball.fire), split: !!(ball && ball.split), piercer: !!(ball && ball.piercer) });
       if (b.type === "gold") { run.coins += 2; run.ev.push({ t: "coin", x: rc.x + rc.w / 2, y: rc.y, n: 2 }); }
       if (b.type === "plus") { run.balls += 1; run.ev.push({ t: "plus", x: rc.x + rc.w / 2, y: rc.y }); }
       if (b.type === "bomb") explode(run, b, ball, 0);
@@ -431,11 +434,12 @@
     ball.walls++;
     if (side === "top" && run.cards.boomer) addMult(run, ball, 2, true); else addMult(run, ball, 1);
     if (ball.walls === 1 && run.cards.billiard) addMult(run, ball, 3);
-    run.ev.push({ t: "wall", x: ball.x, y: ball.y, mult: ball.mult });
+    run.ev.push({ t: "wall", x: ball.x, y: ball.y, mult: ball.mult, fire: !!ball.fire, split: !!ball.split, piercer: !!ball.piercer });
     if (ball.walls === 1 && run.cards.split && !ball.clone) {
       var a = Math.atan2(ball.vy, ball.vx) + 0.35;
-      var nb = { x: ball.x, y: ball.y, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, mult: ball.mult, walls: ball.walls, clone: true, pierce: ball.pierce, ign: null, trail: [] };
-      fixVy(nb); run.flying.push(nb); run.ev.push({ t: "split", x: ball.x, y: ball.y });
+      var nb = { x: ball.x, y: ball.y, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, mult: ball.mult, walls: ball.walls, clone: true, pierce: ball.pierce, ign: null, trail: [],
+        fire: !!ball.fire, split: true, piercer: !!ball.piercer };
+      fixVy(nb); run.flying.push(nb); run.ev.push({ t: "split", x: ball.x, y: ball.y, fire: !!ball.fire, piercer: !!ball.piercer });
     }
   }
   function fixVy(ball) {
@@ -464,7 +468,9 @@
     }
     if (!best) return null;
     if (!ghost && ball.pierce > 0 && best.type !== "boss" && best.type !== "armor") {
-      ball.pierce--; ball.ign = best; damage(run, best, ball, 1, "ball"); return "pierce";
+      ball.pierce--; ball.ign = best;
+      run.ev.push({ t: "pierce", x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
+      damage(run, best, ball, 1, "ball"); return "pierce";
     }
     var nx, ny;
     if (bd > 1e-6) { nx = (ball.x - bcx) / bd; ny = (ball.y - bcy) / bd; }
@@ -638,10 +644,13 @@
     run.shotsLeft = run.cards.frugal ? 4 : 5;
     run.threshold = threshold(run, k);
     run.bossWeak = false;
+    // Always reset flight / launcher so stage transitions never inherit dead state
+    run.flying = []; run.queue = 0; run.emitT = 0; run.acc = 0; run.nextX = null; run.recalled = false;
+    if (!isFinite(run.launchX) || run.launchX !== run.launchX) run.launchX = W / 2;
+    run.launchX = Math.max(30, Math.min(W - 30, run.launchX));
     if (isBossStage(k)) {
       beginStageRng(run);
       var keys = Object.keys(BOSS_RULES); run.bossRule = keys[Math.floor(rnd(run, "rb") * keys.length)];
-      // v5: HP tuned for ~6 dmg/hit (was 150 HP with 1 dmg/hit → softlock for humans)
       // Stage 7 ≈ 48; late bosses soft-cap ~100
       var hp = Math.round(softCap(k, 48, 100, 0.01));
       run.bricks = [];
@@ -655,6 +664,7 @@
       run.breached = true;
       run.endless = k > 7 ? true : run.endless;
     } else {
+      run.bossRule = null;
       // Fresh trap every stage — never inherit debris. Rows soft-cap at 6.
       var rows = k <= 2 ? 4 : 5;
       if (k >= 8) rows = Math.min(6, 4 + Math.floor(softCap(k - 7, 0, 2, 0.01)));
@@ -721,6 +731,6 @@
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
     shareText: shareText, fmtMult: fmtMult, fmtScore: fmtScore, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
-    isBossStage: isBossStage, softCap: softCap, VERSION: "5" };
+    isBossStage: isBossStage, softCap: softCap, VERSION: "6" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);
