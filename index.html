@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#14121f" />
+<title>弹个痛快 BANKSHOT!</title>
+<link rel="stylesheet" href="styles.css?v=2" />
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+  <div id="menu" class="ov">
+    <div class="panel">
+      <div class="logo">弹个痛快</div>
+      <div class="logo2">BANKSHOT!</div>
+      <p class="tag">拖动瞄准 · 松手发射 · 贴墙反弹叠倍率</p>
+      <button id="bDaily" class="btn big">每日挑战 <span id="dDate"></span></button>
+      <button id="bFree" class="btn">自由模式</button>
+      <div id="stats" class="stats"></div>
+      <details class="how"><summary>怎么玩</summary>
+        <p>按住屏幕拖动瞄准，松手射出一串弹珠。弹珠<b>每撞一次墙倍率 +1</b>，每打碎一块砖 +0.5。得分 = 砖块数字 × 倍率。</p>
+        <p>每关 5 发，达到分数门槛即可过关；提前过关，剩余每发换 3 金币。每发结束砖块下降一行，压到红线就输。</p>
+        <p>过关后三选一：弹珠、遗物、强化。第 7 关是 Boss。金砖 ¥ 给金币，炸弹 ✸ 炸周围，+1 加弹珠，×2 让倍率翻倍。</p>
+        <p>弹珠飞行时点屏幕可以加速。</p>
+      </details>
+    </div>
+  </div>
+  <div id="decide" class="ov hidden">
+    <div class="panel">
+      <h2>达标！🎯</h2>
+      <p id="decTxt"></p>
+      <button id="bCash" class="btn big">过关，拿 <span id="decCoins"></span> 金币</button>
+      <button id="bGreed" class="btn">继续贪分（超出部分也换金币）</button>
+    </div>
+  </div>
+  <div id="pick" class="ov hidden">
+    <div class="panel wide">
+      <h2 id="pickTitle">第 1 关通过！</h2>
+      <p class="sub" id="pickSub">三选一</p>
+      <div id="cards"></div>
+      <div class="row"><button id="bReroll" class="btn small">刷新（2 金币）</button><button id="bSkip" class="btn small ghost">跳过</button></div>
+    </div>
+  </div>
+  <div id="over" class="ov hidden">
+    <div class="panel">
+      <h2 id="ovTitle">游戏结束</h2>
+      <p id="ovSub" class="sub"></p>
+      <pre id="ovShare"></pre>
+      <button id="bAgain" class="btn big">再来一把</button>
+      <button id="bShare" class="btn">复制战绩分享</button>
+      <button id="bEndless" class="btn hidden">继续：无尽模式</button>
+      <button id="bHome" class="btn small ghost">回到主页</button>
+    </div>
+  </div>
+  <div id="toast" class="hidden"></div>
+</div>
+<script src="core.js?v=2"></script>
+<script src="game.js?v=2"></script>
+</body>
+</html>
