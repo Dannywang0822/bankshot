@@ -43,7 +43,7 @@
   };
   var BOSS_RULES = {
     armor: { name: "坚甲", desc: "只有撞过墙的弹珠才能伤到 Boss；先打破绽砖可破甲" },
-    regen: { name: "再生", desc: "每发结束 Boss 回复 8% 血量；打破绽砖可禁疗一发" }
+    regen: { name: "再生", desc: "每发结束 Boss 回复 5% 血量；打破绽砖可禁疗一发" }
   };
 
   function threshold(run, k) {
@@ -106,7 +106,7 @@
   }
 
   function beginStageRng(run) {
-    run.rb = hashStr("b" + String(run.seed) + ":s" + run.stage + ":v4");
+    run.rb = hashStr("b" + String(run.seed) + ":s" + run.stage + ":v5");
   }
 
   function pushBrick(run, c, r, opts) {
@@ -274,6 +274,24 @@
     return n;
   }
 
+
+  /** Boss stages: light side pressure only — never bury the weak point column. */
+  function spawnBossPressure(run) {
+    var wk = run.bricks.filter(function (b) { return b.type === "weak" && b.hp > 0; })[0];
+    var forbid = {};
+    if (wk) forbid[wk.c] = 1;
+    // also keep columns under boss clear-ish
+    var bo = run.bricks.filter(function (b) { return b.type === "boss"; })[0];
+    if (bo) for (var dc = 0; dc < bo.cw; dc++) forbid[bo.c + dc] = 1;
+    var n = run.shotIdx <= 2 ? (rnd(run, "rb") < 0.45 ? 1 : 0) : 1 + (rnd(run, "rb") < 0.35 ? 1 : 0);
+    var cols = [0, 1, 2, 3, 4, 5, 6].filter(function (c) { return !forbid[c]; });
+    for (var i = cols.length - 1; i > 0; i--) { var j = Math.floor(rnd(run, "rb") * (i + 1)); var t = cols[i]; cols[i] = cols[j]; cols[j] = t; }
+    for (i = 0; i < n && i < cols.length; i++) {
+      var hp = Math.max(1, Math.round(hpFor(run) * 0.7));
+      pushBrick(run, cols[i], 0, { type: "n", hp: hp, locked: false });
+    }
+    run.dirty = true;
+  }
   function spawnRow(run, r) {
     // During play: new top rows are unlocked pressure — lighter while sealed so trap stays fair
     var sealed = isSealed(run);
@@ -350,13 +368,18 @@
     if ((b.type === "armor" || b.type === "gate") && src === "bomb") {
       dmg = Math.min(3, dmg);
     }
+    // Boss HP: ball hits deal real chunk damage (v4 bug: only scored base=6 but HP -= 1 → unwinnable for humans)
+    var hpDmg = dmg;
+    if (b.type === "boss" && src === "ball") hpDmg = run.bossWeak ? 10 : 6;
+    else if (b.type === "weak" && src === "ball") hpDmg = Math.max(dmg, 3);
+    else if (b.type === "boss" && (src === "bomb" || src === "fire")) hpDmg = Math.max(dmg, run.bossWeak ? 10 : 6);
+    hpDmg = Math.min(hpDmg, b.hp);
     var mult = ball ? ball.mult : 1;
-    var base = b.type === "boss" ? 6 : (b.type === "gate" || b.type === "armor" ? Math.max(2, Math.min(b.hp, dmg + 1)) : b.hp);
-    if (b.type === "boss" && run.bossWeak) base = Math.round(base * 1.5);
-    var pts = ball && run.cards.billiard && ball.walls === 0 ? 0 : Math.round(base * mult * Math.min(dmg, b.hp) / Math.max(1, Math.min(dmg, b.hp)));
+    var base = b.type === "boss" ? (run.bossWeak ? 10 : 6) : (b.type === "gate" || b.type === "armor" ? Math.max(2, Math.min(b.hp, dmg + 1)) : b.hp);
+    var pts = ball && run.cards.billiard && ball.walls === 0 ? 0 : Math.round(base * mult * Math.max(1, hpDmg) / Math.max(1, hpDmg));
     // Gate hits score a bit extra so aiming the gap feels rewarded
     if (b.type === "gate" && src === "ball") pts = Math.round(pts * 1.5);
-    b.hp -= dmg; b.flash = 1;
+    b.hp -= hpDmg; b.flash = 1;
     if (!isFinite(pts) || pts !== pts || pts < 0) pts = 0;
     pts = Math.min(HIT_CAP, pts);
     run.score = Math.min(SCORE_CAP, run.score + pts);
@@ -503,17 +526,36 @@
     run.ev.push({ t: "shotEnd", pts: run.shotPts, max: run.shotMax });
     var boss = run.bricks.filter(function (b) { return b.type === "boss"; })[0];
     if (isBossStage(run.stage) && !boss) { return winBoss(run); }
-    var drops = 1 + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 3 === 0 ? 1 : 0);
-    for (var d = 0; d < drops; d++) {
-      run.bricks.forEach(function (b) { b.r++; });
-      spawnRow(run, 0);
-      if (isBossStage(run.stage)) run.bricks = run.bricks.filter(function (b) { return b.type === "boss" || b.type === "weak" || b.r !== 0 || !overlapBoss(run, b); });
+    if (isBossStage(run.stage)) {
+      // Boss stays put so weak point stays bank-reachable; only clutter drops lightly
+      run.bricks.forEach(function (b) {
+        if (b.type !== "boss" && b.type !== "weak") b.r++;
+      });
+      spawnBossPressure(run);
+      run.bricks = run.bricks.filter(function (b) {
+        if (b.type === "boss" || b.type === "weak") return true;
+        if (b.r + b.ch - 1 >= ROWS) return false;
+        return !overlapBoss(run, b);
+      });
+      // Keep weak exposed: never let clutter sit on its cell
+      var wk = run.bricks.filter(function (b) { return b.type === "weak"; })[0];
+      if (wk) {
+        run.bricks = run.bricks.filter(function (b) {
+          if (b === wk || b.type === "boss") return true;
+          return !(b.c === wk.c && b.r === wk.r);
+        });
+      }
+    } else {
+      var drops = 1 + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 3 === 0 ? 1 : 0);
+      for (var d = 0; d < drops; d++) {
+        run.bricks.forEach(function (b) { b.r++; });
+        spawnRow(run, 0);
+      }
     }
     if (boss && run.bossRule === "regen" && !run.bossWeak) {
-      boss.hp = Math.min(boss.max, boss.hp + Math.round(boss.max * 0.08));
+      boss.hp = Math.min(boss.max, boss.hp + Math.round(boss.max * 0.05));
       run.ev.push({ t: "regen" });
     }
-    // weak brick broken: regen suppressed for this endShot already handled via bossWeak flag permanently for armor/regen benefit
     run.dirty = true;
     var lr = lowestRow(run);
     if (lr >= ROWS) {
@@ -523,7 +565,15 @@
         if (lowestRow(run) >= ROWS) return lose(run, "crush");
       } else return lose(run, "crush");
     }
-    if (isBossStage(run.stage)) { if (run.shotsLeft <= 0) return lose(run, "boss"); run.phase = "aim"; return; }
+    if (isBossStage(run.stage)) {
+      // Mercy: tiny leftover HP with no shots = still clear (no soft-feel brick)
+      if (!boss) return winBoss(run);
+      if (run.shotsLeft <= 0) {
+        if (boss.hp <= Math.max(10, Math.round(boss.max * 0.12))) return winBoss(run);
+        return lose(run, "boss");
+      }
+      run.phase = "aim"; return;
+    }
     if (run.score >= run.threshold) {
       if (run.shotsLeft <= 0) return clearStage(run, false);
       if (!run.greedy) { run.phase = "decide"; return; }
@@ -591,13 +641,15 @@
     if (isBossStage(k)) {
       beginStageRng(run);
       var keys = Object.keys(BOSS_RULES); run.bossRule = keys[Math.floor(rnd(run, "rb") * keys.length)];
-      // Boss HP soft-caps (~140 early → ~320 late) so stage-1000 bosses stay finite
-      var hp = Math.round(softCap(k, 140, 320, 0.008));
+      // v5: HP tuned for ~6 dmg/hit (was 150 HP with 1 dmg/hit → softlock for humans)
+      // Stage 7 ≈ 48; late bosses soft-cap ~100
+      var hp = Math.round(softCap(k, 48, 100, 0.01));
       run.bricks = [];
-      run.bricks.push({ c: 2, r: 0, cw: 3, ch: 2, hp: hp, max: hp, type: "boss", flash: 0, locked: false, keystone: false });
-      var wh = Math.max(4, Math.min(14, Math.round(softCap(k, 6, 14, 0.01))));
-      pushBrick(run, 5, 1, { type: "weak", hp: wh, keystone: false });
-      run.shotsLeft = run.cards.frugal ? 5 : 6;
+      run.bricks.push({ c: 2, r: 1, cw: 3, ch: 2, hp: hp, max: hp, type: "boss", flash: 0, locked: false, keystone: false });
+      // Weak point: right side, one row below boss top — clear bank path from bottom-right
+      var wh = Math.max(3, Math.min(8, Math.round(softCap(k, 3, 8, 0.012))));
+      pushBrick(run, 5, 3, { type: "weak", hp: wh, keystone: false });
+      run.shotsLeft = run.cards.frugal ? 6 : 7;
       run.threshold = 0;
       run.trapPattern = "boss";
       run.breached = true;
@@ -669,6 +721,6 @@
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
     shareText: shareText, fmtMult: fmtMult, fmtScore: fmtScore, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
-    isBossStage: isBossStage, softCap: softCap, VERSION: "4" };
+    isBossStage: isBossStage, softCap: softCap, VERSION: "5" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

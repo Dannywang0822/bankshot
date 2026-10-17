@@ -166,7 +166,7 @@
           banner = { t: 1.4, a: "破绽击破", b: run.bossRule === "armor" ? "坚甲已破，直击生效" : "再生已抑制" };
           tone(660, 0.15, "triangle", 0.07);
           break;
-        case "regen": fl(W / 2, B.TOP + 60, "Boss 回血 +8%", "#ff3d8b", 30); break;
+        case "regen": fl(W / 2, B.TOP + 60, "Boss 回血 +5%", "#ff3d8b", 30); break;
         case "clear": tone(523, 0.12); setTimeout(function () { tone(659, 0.12); }, 90); setTimeout(function () { tone(784, 0.2); }, 180); vib([20, 40, 20, 40, 60]); break;
         case "stage":
           if (B.isBossStage(e.stage)) banner = { t: 3, a: "BOSS · " + B.BOSS_RULES[run.bossRule].name, b: B.BOSS_RULES[run.bossRule].desc + " · " + run.shotsLeft + " 发内击破" };
