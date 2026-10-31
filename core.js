@@ -130,6 +130,75 @@
     return Math.max(10, Math.round(Math.min(t, 500000) / 10) * 10);
   }
 
+  // A full clear while banking at this multiplier is a reasonable, not perfect, round.
+  // Thresholds above ~80% of that budget cannot be reached by clearing the board.
+  var FIT_MULT = 4, FIT_SLACK = 0.8;
+
+  function clearValue(bricks, mult, rule) {
+    var total = 0;
+    for (var i = 0; i < bricks.length; i++) {
+      var b = bricks[i];
+      if (!b || b.hp <= 0) continue;
+      var pts;
+      if (b.type === "armor") pts = b.hp * 2 * mult;
+      else if (b.type === "gate") pts = b.hp * 2 * mult * 1.5;
+      else pts = b.hp * (b.hp + 1) / 2 * mult;
+      if (b.loot) pts *= 1.6;
+      if (rule === "slowmo") pts *= 2;
+      if (rule === "nowalls") pts *= 5;
+      total += pts;
+    }
+    return total;
+  }
+
+  /** Points available if every current brick, plus rows that spawn on shots you still get to fire, is chipped at FIT_MULT. */
+  function attainableScore(run) {
+    if (!run || isBossStage(run.stage)) return 0;
+    var ghost = JSON.parse(JSON.stringify(run));
+    ghost.ev = []; ghost.flying = []; ghost.queue = 0; ghost.acc = 0;
+    var total = clearValue(ghost.bricks, FIT_MULT, ghost.rule);
+    var guard = 0;
+    while (ghost.phase === "aim" && ghost.shotsLeft > 0 && guard++ < 8) {
+      var known = ghost.bricks.slice();
+      ghost.phase = "fly"; ghost.queue = 0; ghost.flying = []; ghost.acc = 0; ghost.shotT = 0; ghost.recalled = false;
+      update(ghost, 1 / 60);
+      if (ghost.phase === "over" || ghost.phase === "win") break;
+      var added = [];
+      for (var i = 0; i < ghost.bricks.length; i++) if (known.indexOf(ghost.bricks[i]) < 0) added.push(ghost.bricks[i]);
+      total += clearValue(added, FIT_MULT, ghost.rule);
+      if (ghost.phase !== "aim") break;
+    }
+    // 台球手 / 先弹后算：撞墙前的几下不计分，留出余量
+    if (billiardOn(ghost)) total *= 0.72;
+    return total;
+  }
+
+  function fitThreshold(run) {
+    if (!run || isBossStage(run.stage) || !(run.threshold > 0)) return;
+    var budget = attainableScore(run);
+    if (!(budget > 0)) return;
+    var cap = Math.max(10, Math.round(budget * FIT_SLACK / 10) * 10);
+    if (run.threshold > cap) run.threshold = cap;
+  }
+
+  function stageGoal(run, k) {
+    if (!run || isBossStage(k)) return 0;
+    var ghost = JSON.parse(JSON.stringify(run));
+    ghost.stage = k;
+    ghost.phase = "pick";
+    ghost.offer = [];
+    ghost.score = 0;
+    ghost.shotIdx = 0;
+    ghost.endless = false;
+    ghost.won = false;
+    ghost.ev = [];
+    ghost.flying = [];
+    ghost.queue = 0;
+    ghost.bossWeak = false;
+    pick(ghost, null);
+    return ghost.threshold || 0;
+  }
+
   function newRun(seed, opts) {
     opts = opts || {};
     var run = {
@@ -143,6 +212,8 @@
     run.rule = ruleAt(run, 1);
     run.threshold = threshold(run, 1);
     buildTrapBoard(run, 4);
+    run.phase = "aim";
+    fitThreshold(run);
     return run;
   }
 
@@ -834,6 +905,8 @@
       if (k >= 8) rows = Math.min(6, 4 + Math.floor(softCap(k - 7, 0, 2, 0.01)));
       buildTrapBoard(run, rows);
       if (k > 7) run.endless = true;
+      run.phase = "aim";
+      fitThreshold(run);
     }
     run.dirty = true; run.phase = "aim";
     run.ev.push({ t: "stage", stage: k, pattern: run.trapPattern });
@@ -896,6 +969,7 @@
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
     shareText: shareText, fmtMult: fmtMult, fmtScore: fmtScore, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
-    isBossStage: isBossStage, softCap: softCap, ruleAt: ruleAt, unlockedRules: unlockedRules, VERSION: "7" };
+    isBossStage: isBossStage, softCap: softCap, ruleAt: ruleAt, unlockedRules: unlockedRules,
+    attainableScore: attainableScore, stageGoal: stageGoal, VERSION: "8" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

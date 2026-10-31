@@ -123,7 +123,7 @@
     $("pickTitle").textContent = "第 " + (run.stage - 1) + " 关通过！";
     var hint = "";
     if (B.isBossStage(run.stage)) hint = " · 下一关是 Boss！";
-    else hint = " · 下一关目标 " + B.fmtScore(B.threshold(run, run.stage)) + " 分";
+    else hint = " · 下一关目标 " + B.fmtScore(B.stageGoal(run, run.stage)) + " 分";
     $("pickSub").textContent = "三选一 · 金币 " + run.coins + hint;
     var offer = run.offer || [];
     if (!offer.length) p.innerHTML = '<p class="sub">没有新卡可拿，点击跳过继续</p>';
