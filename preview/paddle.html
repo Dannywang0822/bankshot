@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>弹球预览</title>
+<link rel="stylesheet" href="../styles.css?v=8" />
+<style>
+  html,body{background:#0c0a16}
+  body.menu-only canvas{opacity:0}
+  #menu{display:none}
+  body.menu-only #menu{display:flex}
+  .preview-tag{font-size:12px;color:#a99fd6;margin-top:8px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="menu" class="ov">
+  <div class="panel">
+    <div class="logo">弹个痛快</div>
+    <div class="logo2">BANKSHOT!</div>
+    <p class="tag">拖动小台子 · 一颗球 · 贴墙叠倍率</p>
+    <div class="modes" role="group">
+      <button type="button" class="mode on">弹球模式</button>
+      <button type="button" class="mode">经典模式</button>
+    </div>
+    <p class="modehint">弹球：底部挡板左右拖，只有一颗球。漏接扣 1 条命，3 条命。清完图案过关，倍率照旧往上叠。</p>
+    <button class="btn big" type="button">每日挑战 10/31</button>
+    <button class="btn" type="button">自由一局 · 弹球</button>
+    <div class="stats">弹球最高 0 · 经典最高 0<br>命 3 · 开局只有 1 颗球</div>
+    <details class="how" open>
+      <summary>这一版怎么玩</summary>
+      <p>手指按住挡板左右拖。球打在挡板不同位置，弹出的角度不同。打掉会发光的砖，会掉一颗技能胶囊，用挡板接住才生效。</p>
+      <p>技能有加长、短板赌倍、子弹时间、分身、重击、补砖雨等。球不会越打越多，分身只是暂时多几颗。</p>
+    </details>
+  </div>
+</div>
+<script src="../core.js?v=8"></script>
+<script>
+(function () {
+  "use strict";
+  var B = window.BS, W = B.W, H = B.H, CW = B.CW, ROWH = B.ROWH, TOP = B.TOP;
+  var BCOL = { n: "#5b8cff", gold: "#ffcc33", bomb: "#ff4d5e", plus: "#39e58c", mult: "#b45bff", gate: "#e8c36a" };
+  function hpCol(hp) { return hp <= 2 ? "#5b8cff" : hp <= 5 ? "#3fd4ff" : hp <= 9 ? "#5dff9a" : hp <= 14 ? "#ffd84a" : hp <= 20 ? "#ff8a3d" : "#ff4d8b"; }
+  function rr(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function txt(ctx, s, x, y, sz, col, al, wt) {
+    ctx.font = (wt || "800") + " " + sz + "px system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.fillStyle = col; ctx.textAlign = al || "center"; ctx.textBaseline = "middle"; ctx.fillText(s, x, y);
+  }
+  var SHAPES = {
+    heart: ["..#G#..", ".#####.", "#######", ".#####.", "..###..", "...#..."],
+    diamond: ["...#...", "..#G#..", ".#L.L#.", "#L.L.L#", ".#L.L#.", "..#.#..", "...K..."],
+    A: ["...#...", "..#.#..", ".#...#.", "#######", "#.....#", "#..G..#", "#.....#"],
+    invader: ["..#.#..", ".#K.K#.", "#######", "##.#.##", "#.#K#.#", "..#.#..", ".#...#."]
+  };
+  function bricksFrom(rows) {
+    var out = [], gates = 0;
+    rows.forEach(function (line, r) {
+      for (var c = 0; c < 7; c++) {
+        var ch = line.charAt(c);
+        if (ch === "." || !ch) continue;
+        var type = "n", hp = 3 + ((c * 2 + r) % 6), key = false, locked = false;
+        if (ch === "G") { type = "gold"; hp = 3; }
+        else if (ch === "K") { type = "gate"; hp = 5; key = true; gates++; }
+        else if (ch === "L") { type = "n"; hp = 8; locked = true; }
+        out.push({ c: c, r: r, hp: hp, type: type, keystone: key, locked: locked });
+      }
+    });
+    return { bricks: out, sealed: gates > 0 };
+  }
+  function drawBricks(ctx, board) {
+    board.bricks.forEach(function (b) {
+      var q = { x: b.c * CW + 4, y: TOP + b.r * ROWH + 4, w: CW - 8, h: ROWH - 8 };
+      var col = BCOL[b.type] || "#5b8cff";
+      var sealed = b.locked && board.sealed;
+      ctx.save(); ctx.translate(q.x + q.w / 2, q.y + q.h / 2);
+      ctx.shadowColor = b.keystone ? "#ffd84a" : col; ctx.shadowBlur = b.keystone ? 22 : 14;
+      var fill = b.type === "n" ? hpCol(b.hp) : col;
+      if (sealed) fill = "#4a4660";
+      rr(ctx, -q.w / 2, -q.h / 2, q.w, q.h, 12);
+      ctx.fillStyle = "rgba(20,18,31,0.9)"; ctx.fill();
+      ctx.lineWidth = b.keystone ? 6 : 4;
+      ctx.strokeStyle = b.keystone ? "#ffd84a" : fill; ctx.stroke();
+      ctx.globalAlpha = sealed ? 0.18 : 0.28; ctx.fillStyle = fill; ctx.fill();
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      if (b.keystone) { txt(ctx, "🔒", 0, -10, 22, "#ffd84a"); txt(ctx, b.hp + "", 0, 16, 26, "#fff"); }
+      else if (b.type === "gold") { txt(ctx, "¥", -q.w / 2 + 16, -q.h / 2 + 15, 18, col); txt(ctx, b.hp + "", 4, 2, 30, "#fff"); }
+      else txt(ctx, b.hp + "", 0, 2, 30, sealed ? "#8a849e" : "#fff");
+      ctx.restore();
+    });
+  }
+  function paddle(ctx, x, w, y, tint) {
+    ctx.save();
+    ctx.shadowColor = tint || "#ffd84a"; ctx.shadowBlur = 18;
+    rr(ctx, x - w / 2, y, w, 22, 11);
+    ctx.fillStyle = tint || "#ffd84a"; ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    rr(ctx, x - w / 2 + 8, y + 4, w - 16, 6, 4); ctx.fill();
+    ctx.restore();
+  }
+  function ball(ctx, x, y, col) {
+    ctx.save();
+    ctx.shadowColor = col || "#fff"; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 6.283);
+    ctx.fillStyle = col || "#fff"; ctx.fill();
+    ctx.restore();
+  }
+  function capsule(ctx, x, y, label, col) {
+    ctx.save();
+    ctx.shadowColor = col; ctx.shadowBlur = 16;
+    rr(ctx, x - 46, y - 18, 92, 36, 18);
+    ctx.fillStyle = "rgba(12,10,22,0.92)"; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = col; ctx.stroke();
+    txt(ctx, label, x, y, 18, col, "center", "900");
+    ctx.restore();
+  }
+  function hud(ctx, o) {
+    ctx.fillStyle = "#1a1729"; ctx.fillRect(0, 0, W, TOP - 6);
+    txt(ctx, o.title || "第 3 关", 24, 32, 28, "#fff", "left", "900");
+    var lives = o.lives == null ? 3 : o.lives;
+    for (var i = 0; i < lives; i++) txt(ctx, "♥", 250 + i * 28, 32, 22, "#ff5a7a", "left", "900");
+    txt(ctx, "¥ " + (o.coins || 6), W - 24, 32, 28, "#ffcc33", "right", "900");
+    var pr = o.pr == null ? 0.42 : o.pr;
+    rr(ctx, 24, 70, W - 48, 28, 14); ctx.fillStyle = "#26213d"; ctx.fill();
+    rr(ctx, 24, 70, Math.max(28, (W - 48) * pr), 28, 14); ctx.fillStyle = "#ff7a3d"; ctx.fill();
+    txt(ctx, (o.score || "1,240") + "  ·  清图过关", W / 2, 84, 18, "#fff");
+    txt(ctx, o.rule || "「钻石」  1 扇门闩", 24, 118, 18, "#ffd84a", "left", "800");
+    if (o.skill) {
+      rr(ctx, W - 210, 100, 186, 32, 16);
+      ctx.fillStyle = "rgba(255,216,74,0.16)"; ctx.fill();
+      ctx.strokeStyle = o.skillCol || "#ffd84a"; ctx.lineWidth = 2; ctx.stroke();
+      txt(ctx, o.skill, W - 117, 116, 16, o.skillCol || "#ffd84a");
+    } else txt(ctx, "倍率 ×" + (o.mult || "3"), W - 24, 118, 18, "#e6e0ff", "right");
+  }
+  function field(ctx) {
+    ctx.fillStyle = "#14121f"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(255,255,255,0.035)"; ctx.lineWidth = 1;
+    for (var c = 1; c < 7; c++) { ctx.beginPath(); ctx.moveTo(c * CW, TOP); ctx.lineTo(c * CW, B.LINE_Y); ctx.stroke(); }
+    ctx.fillStyle = "#2a2446"; ctx.fillRect(0, TOP - 6, W, 6);
+    ctx.strokeStyle = "rgba(255,60,80,0.45)"; ctx.setLineDash([16, 12]); ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(0, B.LINE_Y); ctx.lineTo(W, B.LINE_Y); ctx.stroke(); ctx.setLineDash([]);
+  }
+  function paint(ctx, shot) {
+    if (shot === "menu") return;
+    field(ctx);
+    if (shot === "play") {
+      drawBricks(ctx, bricksFrom(SHAPES.diamond));
+      hud(ctx, { title: "第 4 关", rule: "「钻石」  1 扇门闩", mult: "4", score: "860" });
+      ball(ctx, 430, 820, "#fff");
+      paddle(ctx, 360, 168, 1120);
+      txt(ctx, "拖动挡板", 360, 1170, 18, "#8e85b8");
+    } else if (shot === "capsule") {
+      drawBricks(ctx, bricksFrom(SHAPES.heart));
+      hud(ctx, { title: "第 2 关", rule: "「爱心」  无门闩", mult: "2", score: "420", pr: 0.28 });
+      capsule(ctx, 470, 760, "加长", "#3fd4ff");
+      ball(ctx, 250, 700, "#fff");
+      paddle(ctx, 300, 150, 1120);
+      txt(ctx, "接住胶囊才生效", 360, 1170, 18, "#8e85b8");
+    } else if (shot === "slow") {
+      drawBricks(ctx, bricksFrom(SHAPES.A));
+      ctx.fillStyle = "rgba(80,140,255,0.13)"; ctx.fillRect(0, 0, W, H);
+      hud(ctx, { title: "第 6 关", rule: "「字母 A」  无门闩", skill: "子弹时间  6s", skillCol: "#9ecbff", score: "2,040", pr: 0.55 });
+      ball(ctx, 390, 640, "#cfe4ff");
+      ctx.strokeStyle = "rgba(180,210,255,0.7)"; ctx.lineWidth = 3; ctx.setLineDash([6, 8]);
+      ctx.beginPath(); ctx.moveTo(300, 980); ctx.lineTo(390, 640); ctx.stroke(); ctx.setLineDash([]);
+      paddle(ctx, 340, 160, 1120, "#d7e6ff");
+      txt(ctx, "球变慢，手还是全速", 360, 1170, 18, "#9ecbff");
+    } else if (shot === "short") {
+      drawBricks(ctx, bricksFrom(SHAPES.invader));
+      hud(ctx, { title: "第 9 关", rule: "「入侵者」  3 扇门闩", skill: "短板赌倍  ×2", skillCol: "#ff8aa0", score: "3,600", pr: 0.62 });
+      ball(ctx, 360, 860, "#fff");
+      paddle(ctx, 360, 86, 1120, "#ff8aa0");
+      txt(ctx, "板子更短，这一阵得分翻倍", 360, 1170, 18, "#ff8aa0");
+    } else if (shot === "multi") {
+      drawBricks(ctx, bricksFrom(SHAPES.heart));
+      hud(ctx, { title: "第 2 关", rule: "「爱心」  无门闩", skill: "分身  剩 2 颗", skillCol: "#7af0c8", score: "1,180", pr: 0.5 });
+      ball(ctx, 300, 780, "#fff");
+      ball(ctx, 420, 700, "#7af0c8");
+      ball(ctx, 250, 640, "#7af0c8");
+      paddle(ctx, 330, 156, 1120);
+      txt(ctx, "开局仍是 1 颗，分身只是暂时的", 360, 1170, 18, "#7af0c8");
+    }
+  }
+
+  var q = new URLSearchParams(location.search);
+  var shot = q.get("shot") || "play";
+  if (shot === "menu") document.body.className = "menu-only";
+  var cv = document.getElementById("c");
+  var dpr = 2;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = "390px"; cv.style.height = "844px";
+  var ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  paint(ctx, shot);
+
+  if (q.get("play") === "1") {
+    document.body.className = "";
+    var px = W / 2, py = 1120, bw = 156;
+    var bx = W / 2, by = 1000, vx = 180, vy = -420;
+    var down = false;
+    function loop() {
+      bx += vx / 60; by += vy / 60;
+      if (bx < 14 || bx > W - 14) vx *= -1;
+      if (by < TOP + 14) vy = Math.abs(vy);
+      if (by > py && by < py + 30 && bx > px - bw / 2 && bx < px + bw / 2 && vy > 0) {
+        var t = (bx - px) / (bw / 2);
+        var ang = Math.PI / 2 - t * 1.05;
+        var sp = 460;
+        vx = Math.cos(ang) * sp; vy = -Math.abs(Math.sin(ang) * sp);
+        by = py - 14;
+      }
+      if (by > H + 20) { bx = px; by = py - 80; vx = 160; vy = -420; }
+      field(ctx);
+      drawBricks(ctx, bricksFrom(SHAPES.heart));
+      hud(ctx, { title: "试玩", rule: "拖动挡板接球", mult: "1" });
+      ball(ctx, bx, by, "#fff");
+      paddle(ctx, px, bw, py);
+      requestAnimationFrame(loop);
+    }
+    function setX(clientX) {
+      var r = cv.getBoundingClientRect();
+      px = Math.max(bw / 2, Math.min(W - bw / 2, (clientX - r.left) / r.width * W));
+    }
+    cv.addEventListener("pointerdown", function (e) { down = true; setX(e.clientX); });
+    cv.addEventListener("pointermove", function (e) { if (down) setX(e.clientX); });
+    window.addEventListener("pointerup", function () { down = false; });
+    loop();
+  }
+})();
+</script>
+</body>
+</html>
