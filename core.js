@@ -45,6 +45,68 @@
     armor: { name: "坚甲", desc: "只有撞过墙的弹珠才能伤到 Boss；先打破绽砖可破甲" },
     regen: { name: "再生", desc: "每发结束 Boss 回复 5% 血量；打破绽砖可禁疗一发" }
   };
+  // Random-mode rules. Ids and unlock order are part of the daily-seed contract.
+  // Weight-5 on the stage a rule first unlocks; never repeats the previous stage.
+  var RULE_POOL = ["goldrain", "slowmo", "bombtide", "ceiling", "frugal", "doubledrop", "hardgate", "billiard", "mirror", "nowalls"];
+  var RULES = {
+    warmup:    { name: "热身",     desc: "本关没有额外规则，先打门闩缺口" },
+    goldrain:  { name: "黄金雨",   desc: "本关金砖数量约翻倍" },
+    mirror:    { name: "镜像墙",   desc: "左右墙是传送门，从一边出去从另一边进来" },
+    slowmo:    { name: "慢动作",   desc: "弹珠约 0.6 倍速，本关倍率结算 ×2" },
+    nowalls:   { name: "无左右墙", desc: "左右出界即回收，顶墙仍反弹。得分 ×5，门槛约 −85%" },
+    billiard:  { name: "先弹后算", desc: "撞墙前打中的砖不计分，首次撞墙起倍率 +3" },
+    doubledrop:{ name: "双倍下压", desc: "每发结束，砖块下移 2 行" },
+    frugal:    { name: "节俭关",   desc: "本关只有 4 发，分数门槛约 −35%" },
+    bombtide:  { name: "炸弹潮",   desc: "本关炸弹砖明显变多" },
+    hardgate:  { name: "硬核门闩", desc: "门闩血量约 ×1.8，锁区砖分值更高" },
+    ceiling:   { name: "顶墙加倍", desc: "撞顶墙倍率按 ×2 计，与回力镖再乘一次" }
+  };
+  function unlockedRules(k) {
+    var n = 0;
+    if (k >= 2) n = 3;
+    if (k >= 3) n = 5;
+    if (k >= 4) n = 7;
+    if (k >= 5) n = 9;
+    if (k >= 6) n = 10;
+    return RULE_POOL.slice(0, n);
+  }
+  function drawRule(seed, stage, prev) {
+    var pool = unlockedRules(stage);
+    var older = unlockedRules(stage - 1);
+    var cands = [];
+    for (var i = 0; i < pool.length; i++) if (pool[i] !== prev) cands.push(pool[i]);
+    if (!cands.length) cands = pool.slice();
+    var weights = [], total = 0;
+    for (var j = 0; j < cands.length; j++) {
+      var w = older.indexOf(cands[j]) < 0 ? 5 : 1;
+      weights.push(w); total += w;
+    }
+    var roll = mulberry(hashStr("rule|" + String(seed) + "|" + stage))[1] * total, acc = 0;
+    for (var n = 0; n < cands.length; n++) {
+      acc += weights[n];
+      if (roll < acc) return cands[n];
+    }
+    return cands[cands.length - 1];
+  }
+  /** Deterministic rule for stage k. Null on classic and on boss stages. */
+  function ruleAt(run, k) {
+    if (!run || !run.randomMode || k == null) return null;
+    if (k <= 1) return "warmup";
+    var prev = null, cur = null;
+    for (var s = 2; s <= k; s++) {
+      if (isBossStage(s)) { prev = null; cur = null; continue; }
+      cur = drawRule(run.seed, s, prev);
+      prev = cur;
+    }
+    return cur;
+  }
+  function ruleActive(run, id) { return !!(run && run.randomMode && run.rule === id); }
+  function billiardOn(run) { return !!(run.cards && run.cards.billiard) || ruleActive(run, "billiard"); }
+  function spdOf(run) { return ruleActive(run, "slowmo") ? SPEED * 0.6 : SPEED; }
+  function rndRule(run) {
+    if (run.rr == null) run.rr = hashStr("r" + String(run.seed) + ":s" + run.stage + ":rule");
+    var o = mulberry(run.rr); run.rr = o[0]; return o[1];
+  }
 
   function threshold(run, k) {
     // Soft asymptotic growth → stage 1000 stays finite & playable.
@@ -58,7 +120,12 @@
       var n = k - 7;
       t = softCap(n, 2400, 160000, 0.0055);
     }
-    if (run.cards && run.cards.frugal) t *= 0.65;
+    // Card and the stage rule share one −35%. ruleAt (not run.rule) so the
+    // pick-screen preview matches the stage that is about to start.
+    // 无左右墙拿掉了贴墙刷倍，门槛下调，避免正打打不穿分数门。
+    var stageRule = run && run.randomMode ? ruleAt(run, k) : null;
+    if ((run.cards && run.cards.frugal) || stageRule === "frugal") t *= 0.65;
+    if (stageRule === "nowalls") t *= 0.15;
     if (!isFinite(t) || t !== t) t = 160000;
     return Math.max(10, Math.round(Math.min(t, 500000) / 10) * 10);
   }
@@ -70,8 +137,10 @@
       balls: 3, cards: {}, sight: 1, bricks: [], launchX: W / 2, nextX: null, flying: [], queue: 0, emitT: 0,
       phase: "aim", ev: [], maxMult: 1, marks: [], safety: opts.safety ? 1 : 0, shotT: 0, acc: 0,
       shotsLeft: 5, shotIdx: 0, shotPts: 0, reroll: 2, offer: null, bossRule: null, bricksBroken: 0, endless: false,
-      daily: !!opts.daily, dirty: true, map: null, lostBy: 0, trapPattern: null, breached: false, bossWeak: false
+      daily: !!opts.daily, dirty: true, map: null, lostBy: 0, trapPattern: null, breached: false, bossWeak: false,
+      randomMode: !!opts.random, rule: null
     };
+    run.rule = ruleAt(run, 1);
     run.threshold = threshold(run, 1);
     buildTrapBoard(run, 4);
     return run;
@@ -107,6 +176,7 @@
 
   function beginStageRng(run) {
     run.rb = hashStr("b" + String(run.seed) + ":s" + run.stage + ":v5");
+    run.rr = hashStr("r" + String(run.seed) + ":s" + run.stage + ":rule");
   }
 
   function pushBrick(run, c, r, opts) {
@@ -253,7 +323,70 @@
       for (var i = 1; i < keys.length; i++) { keys[i].keystone = false; keys[i].type = "armor"; }
     }
 
+    applyBoardRule(run);
     run.dirty = true;
+  }
+
+  /** Layer random-mode board modifiers on top of the classic layout. Uses rr, never rb. */
+  function applyBoardRule(run) {
+    if (!run.randomMode) return;
+    if (run.rule === "goldrain") convertNormals(run, "gold", 2, 2, 8);
+    else if (run.rule === "bombtide") convertNormals(run, "bomb", 3, 3, 6);
+    else if (run.rule === "hardgate") {
+      for (var i = 0; i < run.bricks.length; i++) {
+        var b = run.bricks[i];
+        if (b.keystone) {
+          b.hp = Math.max(1, Math.round(b.hp * 1.8));
+          b.max = b.hp;
+        } else if (b.locked && b.type !== "armor" && b.type !== "gate") b.loot = true;
+      }
+    } else if (run.rule === "nowalls") openGateLane(run);
+  }
+  /** Park the keystone in the center column and clear the lane under it.
+   *  A shot from anywhere on the baseline can still reach it with no side walls. */
+  function openGateLane(run) {
+    var g = null, i, b;
+    for (i = 0; i < run.bricks.length; i++) if (run.bricks[i].keystone) g = run.bricks[i];
+    if (!g) return;
+    var target = 3;
+    if (g.c !== target) {
+      var occupant = null;
+      for (i = 0; i < run.bricks.length; i++) {
+        b = run.bricks[i];
+        if (b !== g && b.c === target && b.r === g.r) occupant = b;
+      }
+      if (occupant) occupant.c = g.c;
+      g.c = target;
+    }
+    g.hp = Math.max(3, Math.round(g.hp * 0.55));
+    g.max = g.hp;
+    run.bricks = run.bricks.filter(function (b2) {
+      if (b2 === g || b2.keystone) return true;
+      if (b2.c === g.c && b2.r > g.r) return false;
+      return true;
+    });
+  }
+  function convertNormals(run, type, factor, minAdd, maxAdd) {
+    var cur = 0, pool = [], i;
+    for (i = 0; i < run.bricks.length; i++) if (run.bricks[i].type === type) cur++;
+    var add = Math.round(cur * (factor - 1));
+    if (cur === 0) add = minAdd;
+    if (add > maxAdd) add = maxAdd;
+    for (i = 0; i < run.bricks.length; i++) {
+      var b = run.bricks[i];
+      if (b.type === "n" && !b.keystone) pool.push(b);
+    }
+    for (var n = 0; n < add && pool.length; n++) {
+      var idx = Math.floor(rndRule(run) * pool.length);
+      pool[idx].type = type;
+      pool.splice(idx, 1);
+    }
+  }
+  function spiceType(run, type, sealed) {
+    if (!run.randomMode || type !== "n") return type;
+    if (run.rule === "goldrain" && rndRule(run) < 0.22) return "gold";
+    if (run.rule === "bombtide" && rndRule(run) < (sealed ? 0.12 : 0.34)) return "bomb";
+    return type;
   }
 
   function keystoneOf(run) {
@@ -307,6 +440,7 @@
       else if (!sealed && k >= 2 && x < 0.14) type = "bomb";
       else if (k >= 2 && x < 0.2) { type = "plus"; hp = 1; }
       else if (!sealed && k >= 4 && x < 0.25) type = "mult";
+      type = spiceType(run, type, sealed);
       pushBrick(run, c, r, { type: type, hp: hp, locked: false });
     }
     run.dirty = true;
@@ -342,8 +476,8 @@
   }
 
   function emit(run) {
-    var a = run.angle;
-    run.flying.push({ x: run.launchX, y: LAUNCH_Y, vx: Math.cos(a) * SPEED, vy: -Math.sin(a) * SPEED, mult: run.sm,
+    var a = run.angle, sp = spdOf(run);
+    run.flying.push({ x: run.launchX, y: LAUNCH_Y, vx: Math.cos(a) * sp, vy: -Math.sin(a) * sp, mult: run.sm,
       walls: 0, clone: false, pierce: run.cards.pierce ? 2 : 0, ign: null, trail: [],
       fire: !!run.cards.fire, split: !!run.cards.split, piercer: !!run.cards.pierce });
     run.queue--;
@@ -377,9 +511,12 @@
     hpDmg = Math.min(hpDmg, b.hp);
     var mult = ball ? ball.mult : 1;
     var base = b.type === "boss" ? (run.bossWeak ? 10 : 6) : (b.type === "gate" || b.type === "armor" ? Math.max(2, Math.min(b.hp, dmg + 1)) : b.hp);
-    var pts = ball && run.cards.billiard && ball.walls === 0 ? 0 : Math.round(base * mult * Math.max(1, hpDmg) / Math.max(1, hpDmg));
+    var pts = ball && billiardOn(run) && ball.walls === 0 ? 0 : Math.round(base * mult * Math.max(1, hpDmg) / Math.max(1, hpDmg));
     // Gate hits score a bit extra so aiming the gap feels rewarded
     if (b.type === "gate" && src === "ball") pts = Math.round(pts * 1.5);
+    if (pts > 0 && b.loot) pts = Math.round(pts * 1.6);
+    if (pts > 0 && ruleActive(run, "slowmo")) pts = Math.round(pts * 2);
+    if (pts > 0 && ruleActive(run, "nowalls")) pts = Math.round(pts * 5);
     b.hp -= hpDmg; b.flash = 1;
     if (!isFinite(pts) || pts !== pts || pts < 0) pts = 0;
     pts = Math.min(HIT_CAP, pts);
@@ -432,29 +569,51 @@
 
   function wallBounce(run, ball, side) {
     ball.walls++;
-    if (side === "top" && run.cards.boomer) addMult(run, ball, 2, true); else addMult(run, ball, 1);
-    if (ball.walls === 1 && run.cards.billiard) addMult(run, ball, 3);
+    var ceiling = ruleActive(run, "ceiling");
+    if (side === "top" && run.cards.boomer) {
+      addMult(run, ball, 2, true);
+      if (ceiling) addMult(run, ball, 2, true);
+    } else if (side === "top" && ceiling) addMult(run, ball, 2, true);
+    else addMult(run, ball, 1);
+    if (ball.walls === 1 && billiardOn(run)) addMult(run, ball, 3);
     run.ev.push({ t: "wall", x: ball.x, y: ball.y, mult: ball.mult, fire: !!ball.fire, split: !!ball.split, piercer: !!ball.piercer });
     if (ball.walls === 1 && run.cards.split && !ball.clone) {
+      var sp = spdOf(run);
       var a = Math.atan2(ball.vy, ball.vx) + 0.35;
-      var nb = { x: ball.x, y: ball.y, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, mult: ball.mult, walls: ball.walls, clone: true, pierce: ball.pierce, ign: null, trail: [],
+      var nb = { x: ball.x, y: ball.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, mult: ball.mult, walls: ball.walls, clone: true, pierce: ball.pierce, ign: null, trail: [],
         fire: !!ball.fire, split: true, piercer: !!ball.piercer };
-      fixVy(nb); run.flying.push(nb); run.ev.push({ t: "split", x: ball.x, y: ball.y, fire: !!ball.fire, piercer: !!ball.piercer });
+      fixVy(nb, sp); run.flying.push(nb); run.ev.push({ t: "split", x: ball.x, y: ball.y, fire: !!ball.fire, piercer: !!ball.piercer });
     }
   }
-  function fixVy(ball) {
-    var s = Math.hypot(ball.vx, ball.vy) || SPEED, min = MINVY * SPEED;
-    if (Math.abs(ball.vy) < min) { ball.vy = (ball.vy > 0 ? 1 : -1) * min; var sx = Math.sqrt(Math.max(0, SPEED * SPEED - min * min)); ball.vx = (ball.vx >= 0 ? 1 : -1) * sx; }
-    else if (Math.abs(s - SPEED) > 1) { ball.vx *= SPEED / s; ball.vy *= SPEED / s; }
+  function fixVy(ball, spd) {
+    if (!spd) spd = SPEED;
+    var s = Math.hypot(ball.vx, ball.vy) || spd, min = MINVY * spd;
+    if (Math.abs(ball.vy) < min) { ball.vy = (ball.vy > 0 ? 1 : -1) * min; var sx = Math.sqrt(Math.max(0, spd * spd - min * min)); ball.vx = (ball.vx >= 0 ? 1 : -1) * sx; }
+    else if (Math.abs(s - spd) > 1) { ball.vx *= spd / s; ball.vy *= spd / s; }
   }
 
   function moveBall(run, ball, dt, ghost) {
     ball.x += ball.vx * dt; ball.y += ball.vy * dt;
     var bounced = null;
-    if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); bounced = "side"; }
-    else if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); bounced = "side"; }
+    var rule = run.randomMode ? run.rule : null;
+    if (rule === "mirror") {
+      var span = W - 2 * R;
+      var wrapped = false;
+      if (ball.x < R) { ball.x += span; wrapped = true; }
+      else if (ball.x > W - R) { ball.x -= span; wrapped = true; }
+      // Only nudge nearly-horizontal loops; a normal bank is not a bounce.
+      if (wrapped && Math.abs(ball.vy) < MINVY * spdOf(run) * 0.5) fixVy(ball, spdOf(run));
+    } else if (rule === "nowalls") {
+      if (ball.x < R || ball.x > W - R) {
+        if (!ghost) { ball.vx = 0; ball.vy = Math.abs(spdOf(run)); ball.y = LAUNCH_Y + 1; }
+        return "out";
+      }
+    } else {
+      if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); bounced = "side"; }
+      else if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); bounced = "side"; }
+    }
     if (ball.y < TOP + R) { ball.y = TOP + R; ball.vy = Math.abs(ball.vy); bounced = "top"; }
-    if (bounced) { if (!ghost) wallBounce(run, ball, bounced); fixVy(ball); return bounced; }
+    if (bounced) { if (!ghost) wallBounce(run, ball, bounced); fixVy(ball, spdOf(run)); return bounced; }
     if (ball.recall) return null;
     var c0 = Math.floor((ball.x - R) / CW), c1 = Math.floor((ball.x + R) / CW);
     var r0 = Math.floor((ball.y - R - TOP) / ROWH), r1 = Math.floor((ball.y + R - TOP) / ROWH);
@@ -486,13 +645,15 @@
 
   function preview(run, angle, bounces) {
     angle = clampAngle(angle);
-    var g = { x: run.launchX, y: LAUNCH_Y, vx: Math.cos(angle) * SPEED, vy: -Math.sin(angle) * SPEED, walls: 0 };
+    var sp = spdOf(run);
+    var g = { x: run.launchX, y: LAUNCH_Y, vx: Math.cos(angle) * sp, vy: -Math.sin(angle) * sp, walls: 0 };
     var pts = [[g.x, g.y]], n = 0, after = 0, dt = 1 / 900;
     for (var i = 0; i < 6000; i++) {
       var res = moveBall(run, g, dt, true);
+      if (res === "out") { pts.push([g.x, g.y]); break; }
       if (res) { pts.push([g.x, g.y]); n++; }
       if (n > bounces) { pts.pop(); pts.push([g.x, g.y]); break; }
-      if (n === bounces) { after += SPEED * dt; if (after > 260) { pts.push([g.x, g.y]); break; } }
+      if (n === bounces) { after += sp * dt; if (after > 260) { pts.push([g.x, g.y]); break; } }
       if (g.y > LAUNCH_Y) { pts.push([g.x, g.y]); break; }
     }
     return pts;
@@ -506,7 +667,8 @@
   function tick(run, dt) {
     run.shotT += dt;
     if (run.queue > 0) { run.emitT -= dt; if (run.emitT <= 0) { emit(run); run.emitT = EMIT_GAP; } }
-    if (run.shotT > MAX_SHOT_T && !run.recalled) recall(run);
+    var cap = spdOf(run) < SPEED ? MAX_SHOT_T * SPEED / spdOf(run) : MAX_SHOT_T;
+    if (run.shotT > cap && !run.recalled) recall(run);
     for (var i = run.flying.length - 1; i >= 0; i--) {
       var b = run.flying[i];
       moveBall(run, b, dt, false);
@@ -552,7 +714,7 @@
         });
       }
     } else {
-      var drops = 1 + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 3 === 0 ? 1 : 0);
+      var drops = (ruleActive(run, "doubledrop") ? 2 : 1) + (run.stage === 6 && run.shotIdx % 3 === 0 ? 1 : 0) + (run.endless && run.shotIdx % 3 === 0 ? 1 : 0);
       for (var d = 0; d < drops; d++) {
         run.bricks.forEach(function (b) { b.r++; });
         spawnRow(run, 0);
@@ -641,14 +803,14 @@
   function startStage(run) {
     var k = run.stage;
     run.score = 0; run.greedy = false; run.shotIdx = 0; run.offer = null; run.rerolled = false;
-    run.shotsLeft = run.cards.frugal ? 4 : 5;
-    run.threshold = threshold(run, k);
+    run.rule = ruleAt(run, k);
     run.bossWeak = false;
     // Always reset flight / launcher so stage transitions never inherit dead state
     run.flying = []; run.queue = 0; run.emitT = 0; run.acc = 0; run.nextX = null; run.recalled = false;
     if (!isFinite(run.launchX) || run.launchX !== run.launchX) run.launchX = W / 2;
     run.launchX = Math.max(30, Math.min(W - 30, run.launchX));
     if (isBossStage(k)) {
+      run.rule = null;
       beginStageRng(run);
       var keys = Object.keys(BOSS_RULES); run.bossRule = keys[Math.floor(rnd(run, "rb") * keys.length)];
       // Stage 7 ≈ 48; late bosses soft-cap ~100
@@ -664,6 +826,8 @@
       run.breached = true;
       run.endless = k > 7 ? true : run.endless;
     } else {
+      run.shotsLeft = (run.cards.frugal || run.rule === "frugal") ? 4 : 5;
+      run.threshold = threshold(run, k);
       run.bossRule = null;
       // Fresh trap every stage — never inherit debris. Rows soft-cap at 6.
       var rows = k <= 2 ? 4 : 5;
@@ -713,6 +877,7 @@
     var grid = run.marks.join("") + "⬜".repeat(Math.max(0, 7 - run.marks.length));
     var build = Object.keys(run.cards).filter(function (k) { return CARDS[k].kind !== "up"; }).map(function (k) { return CARDS[k].name; }).slice(0, 4).join(" + ") || "裸打";
     var head = run.daily ? "弹个痛快 · 每日 " + dateStr.slice(5).replace("-", "/") : "弹个痛快 BANKSHOT!";
+    if (run.randomMode) head += " · 随机";
     var res = run.why ? ("倒在第 " + run.stage + " 关") : (run.won && !run.endless ? "通关战役！" : ("第 " + run.stage + " 关"));
     return head + "\n" + grid + " " + res + "\n最高倍率 ×" + fmtMult(run.maxMult) + " | 得分 " + run.total.toLocaleString("en-US") + "\n流派：" + build;
   }
@@ -727,10 +892,10 @@
   }
 
   var API = { W: W, H: H, COLS: COLS, CW: CW, ROWH: ROWH, TOP: TOP, ROWS: ROWS, LINE_Y: LINE_Y, LAUNCH_Y: LAUNCH_Y, R: R, SPEED: SPEED,
-    CARDS: CARDS, BOSS_RULES: BOSS_RULES, PATTERNS: PATTERNS, newRun: newRun, fire: fire, update: update, preview: preview, decide: decide, pick: pick,
+    CARDS: CARDS, BOSS_RULES: BOSS_RULES, RULES: RULES, RULE_POOL: RULE_POOL, PATTERNS: PATTERNS, newRun: newRun, fire: fire, update: update, preview: preview, decide: decide, pick: pick,
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
     shareText: shareText, fmtMult: fmtMult, fmtScore: fmtScore, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
-    isBossStage: isBossStage, softCap: softCap, VERSION: "6" };
+    isBossStage: isBossStage, softCap: softCap, ruleAt: ruleAt, unlockedRules: unlockedRules, VERSION: "7" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

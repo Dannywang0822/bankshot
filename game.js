@@ -39,27 +39,53 @@
   function toLogical(e) { var r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - ox) / scale, y: (e.clientY - r.top - oy) / scale }; }
 
   // ---------- game flow ----------
+  function playMode() { return ld("mode", "random") === "classic" ? "classic" : "random"; }
+  function syncModeUi() {
+    var m = playMode();
+    var r = $("mRandom"), c = $("mClassic");
+    if (r) r.classList.toggle("on", m === "random");
+    if (c) c.classList.toggle("on", m === "classic");
+    var hint = $("modeHint");
+    if (hint) hint.textContent = m === "random"
+      ? "自由模式：每关一条规则，打完再抽。每日挑战固定随机玩法，同一天种子相同。"
+      : "自由模式：经典规则，手感与数值和以前一样。每日挑战仍是随机玩法。";
+    var free = $("bFree");
+    if (free) free.textContent = m === "random" ? "自由模式 · 随机" : "自由模式 · 经典";
+  }
+  function setMode(m) {
+    sv("mode", m === "classic" ? "classic" : "random");
+    syncModeUi();
+  }
   function startRun(daily) {
     audio();
     var runs = ld("runs", 0);
     var seed = daily ? "daily-" + today : "free-" + Date.now() + "-" + Math.random();
-    run = B.newRun(seed, { daily: daily, safety: runs < 2 });
+    var useRandom = !!daily || playMode() === "random";
+    run = B.newRun(seed, { daily: daily, safety: runs < 2, random: useRandom });
     sv("runs", runs + 1);
     if (daily) { var st = ld("streak", { last: "", n: 0 }); if (st.last !== today) { var y = B.shanghaiDate(new Date(Date.now() - 864e5)); st.n = st.last === y ? st.n + 1 : 1; st.last = today; sv("streak", st); } }
     parts = []; floats = []; big = null; fast = false; aiming = false;
     hideAll();
-    banner = { t: 2.4, a: "第 1 关", b: "先打门闩缺口 · 目标 " + run.threshold + " 分" };
+    if (run.randomMode && run.rule && B.RULES[run.rule]) {
+      banner = { t: 2, a: B.RULES[run.rule].name, b: B.RULES[run.rule].desc };
+    } else {
+      banner = { t: 2.4, a: "第 1 关", b: "先打门闩缺口 · 目标 " + run.threshold + " 分" };
+    }
   }
   function hideAll() { ["menu", "decide", "pick", "over"].forEach(function (i) { $(i).classList.add("hidden"); }); }
   function showMenu() {
     hideAll(); $("menu").classList.remove("hidden"); run = null;
     $("dDate").textContent = today.slice(5).replace("-", "/");
+    syncModeUi();
     var st = ld("streak", { n: 0 }), db = ld("daily_" + today, null);
-    $("stats").innerHTML = "最高分 " + ld("best", 0).toLocaleString() + " · 最高倍率 ×" + B.fmtMult(ld("bestMult", 1)) +
+    $("stats").innerHTML = "随机最高 " + ld("bestR", 0).toLocaleString() + " · 经典最高 " + ld("best", 0).toLocaleString() +
+      "<br>最高倍率 随机 ×" + B.fmtMult(ld("bestMultR", 1)) + " · 经典 ×" + B.fmtMult(ld("bestMult", 1)) +
       "<br>通关 " + ld("wins", 0) + " 次 · 每日连续 " + (st.n || 0) + " 天" + (db != null ? "<br>今日每日挑战：" + db.toLocaleString() + " 分" : "");
   }
   $("bDaily").onclick = function () { startRun(true); };
   $("bFree").onclick = function () { startRun(false); };
+  $("mRandom").onclick = function () { setMode("random"); };
+  $("mClassic").onclick = function () { setMode("classic"); };
   $("bCash").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, true); $("decide").classList.add("hidden"); };
   $("bGreed").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, false); $("decide").classList.add("hidden"); };
   $("bReroll").onclick = function () { if (B.reroll(run)) { tone(660, 0.1, "square", 0.05); renderPick(); } };
@@ -127,8 +153,10 @@
     $("ovSub").innerHTML = sub;
     $("ovShare").textContent = B.shareText(run, today);
     $("bEndless").classList.toggle("hidden", !(cleared && !run.endless && !run.why));
-    if (run.total > ld("best", 0)) sv("best", run.total);
-    if (run.maxMult > ld("bestMult", 1)) sv("bestMult", run.maxMult);
+    var scoreKey = run.randomMode ? "bestR" : "best";
+    var multKey = run.randomMode ? "bestMultR" : "bestMult";
+    if (run.total > ld(scoreKey, 0)) sv(scoreKey, run.total);
+    if (run.maxMult > ld(multKey, 1)) sv(multKey, run.maxMult);
     if (cleared && !run.endless) sv("wins", ld("wins", 0) + 1);
     if (run.daily) { var db = ld("daily_" + today, null); if (db == null || run.total > db) sv("daily_" + today, run.total); }
     setTimeout(function () { $("over").classList.remove("hidden"); }, cleared && !endlessDead ? 900 : 700);
@@ -229,9 +257,10 @@
           if (B.isBossStage(e.stage) && run.bossRule && B.BOSS_RULES[run.bossRule]) {
             var br = B.BOSS_RULES[run.bossRule];
             banner = { t: 3, a: "BOSS · " + br.name, b: br.desc + " · " + run.shotsLeft + " 发内击破" };
+          } else if (run.randomMode && run.rule && B.RULES[run.rule]) {
+            banner = { t: 2, a: B.RULES[run.rule].name, b: B.RULES[run.rule].desc };
           } else {
             var tip = e.stage <= 2 ? " · 先打门闩缺口！" : (e.stage === 6 ? " · 砖块每 3 发多降一行！" : "");
-            var pat = e.pattern && e.pattern !== "boss" ? " · 阵型 " + e.pattern : "";
             banner = { t: 2.2, a: "第 " + e.stage + " 关", b: "目标 " + B.fmtScore(run.threshold) + " 分 · " + run.shotsLeft + " 发" + tip };
           }
           break;
@@ -284,7 +313,15 @@
     ctx.strokeStyle = "rgba(255,255,255,0.035)"; ctx.lineWidth = 1;
     for (var c = 1; c < B.COLS; c++) { ctx.beginPath(); ctx.moveTo(c * B.CW, B.TOP); ctx.lineTo(c * B.CW, B.LINE_Y); ctx.stroke(); }
     // walls glow
-    ctx.fillStyle = "#2a2446"; ctx.fillRect(0, B.TOP - 6, W, 6);
+    var hudRule = run && run.randomMode ? run.rule : null;
+    ctx.fillStyle = hudRule === "ceiling" ? "#ffd84a" : "#2a2446"; ctx.fillRect(0, B.TOP - 6, W, 6);
+    if (hudRule === "mirror") {
+      ctx.fillStyle = "rgba(63,212,255,0.7)"; ctx.fillRect(0, B.TOP, 12, B.LINE_Y - B.TOP); ctx.fillRect(W - 12, B.TOP, 12, B.LINE_Y - B.TOP);
+    } else if (hudRule === "nowalls") {
+      ctx.save(); ctx.strokeStyle = "rgba(255,180,120,0.45)"; ctx.setLineDash([10, 14]); ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(8, B.TOP); ctx.lineTo(8, B.LINE_Y); ctx.moveTo(W - 8, B.TOP); ctx.lineTo(W - 8, B.LINE_Y); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+    }
     if (!run) { drawIdle(dt); return; }
     var lr = B.lowestRow(run), danger = lr >= B.ROWS - 2;
     // danger line
@@ -395,7 +432,7 @@
     if (tutT > 0 && run.phase === "fly") { tutT -= dt; txt("贴墙反弹 → 倍率 +1 ！", W / 2, B.LINE_Y + 50, 32, "#ffd84a", "center", "900"); }
     // big multiplier celebration
     if (big) { big.t -= dt; if (big.t <= 0) big = null; else { var s = 1 + Math.max(0, big.t - 1) * 3; ctx.save(); ctx.translate(W / 2, H * 0.42); ctx.scale(s, s); ctx.globalAlpha = Math.min(1, big.t * 1.5); ctx.lineWidth = 10; ctx.strokeStyle = "#000"; ctx.font = "900 150px system-ui,sans-serif"; ctx.textAlign = "center"; ctx.strokeText("×" + big.m, 0, 0); txt("×" + big.m, 0, 0, 150, multCol(big.m), "center", "900"); txt(big.m >= 64 ? "爆了！！！" : big.m >= 32 ? "离谱！" : "漂亮！", 0, 110, 50, "#fff", "center", "900"); ctx.restore(); ctx.globalAlpha = 1; } }
-    if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; else { ctx.globalAlpha = Math.min(1, banner.t * 2); ctx.fillStyle = "rgba(10,8,20,0.82)"; ctx.fillRect(0, H * 0.38, W, 190); txt(banner.a, W / 2, H * 0.38 + 70, 60, "#ffd84a", "center", "900"); txt(banner.b, W / 2, H * 0.38 + 140, 26, "#e6e0ff"); ctx.globalAlpha = 1; } }
+    if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; else { ctx.globalAlpha = Math.min(1, banner.t * 2); ctx.fillStyle = "rgba(10,8,20,0.82)"; ctx.fillRect(0, H * 0.38, W, 190); txt(banner.a, W / 2, H * 0.38 + 70, 60, "#ffd84a", "center", "900"); var bsz = 26; ctx.font = "800 " + bsz + "px system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif"; while (bsz > 16 && ctx.measureText(banner.b).width > W - 64) bsz -= 1; txt(banner.b, W / 2, H * 0.38 + 140, bsz, "#e6e0ff"); ctx.globalAlpha = 1; } }
     if (flash > 0) { ctx.globalAlpha = flash * 0.5; ctx.fillStyle = flashCol; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; flash = Math.max(0, flash - dt * 1.6); }
     shake = Math.max(0, shake - dt * 60);
   }
@@ -433,7 +470,14 @@
       txt(B.fmtScore(run.score) + " / " + B.fmtScore(run.threshold) + (pr >= 1 ? " ✓" : ""), W / 2, 94, 22, "#fff");
     }
     var cards = Object.keys(run.cards).filter(function (k) { return B.CARDS[k].kind !== "up"; }).map(function (k) { return B.CARDS[k].icon; }).join(" ");
-    if (cards) txt(cards, 24, 128, 18, "#c9c2e8", "left");
+    var hx = 24;
+    if (run.randomMode && run.rule && B.RULES[run.rule]) {
+      var rn = "「" + B.RULES[run.rule].name + "」";
+      txt(rn, hx, 128, 18, "#ffd84a", "left", "800");
+      ctx.font = "800 18px system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif";
+      hx += ctx.measureText(rn).width + 14;
+    }
+    if (cards) txt(cards, hx, 128, 18, "#c9c2e8", "left");
     txt("总分 " + run.total.toLocaleString(), W - 24, 128, 18, "#8e85b8", "right");
   }
   function drawTutorial() {

@@ -8,7 +8,12 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 .panel.wide{width:min(420px,100%)}
 .logo{font-size:46px;font-weight:900;letter-spacing:4px;background:linear-gradient(90deg,#ffd84a,#ff7a3d,#ff3d8b,#a65bff);-webkit-background-clip:text;background-clip:text;color:transparent}
 .logo2{font-size:18px;font-weight:800;letter-spacing:6px;color:#8e85b8;margin-bottom:8px}
-.tag{color:#c9c2e8;font-size:14px;margin-bottom:18px}
+.tag{color:#c9c2e8;font-size:14px;margin-bottom:14px}
+.modes{display:flex;gap:8px}
+.mode{flex:1;padding:10px 4px;border-radius:14px;border:2px solid #4a4175;background:#241f3d;color:#c9c2e8;font-weight:800;font-size:15px;cursor:pointer;touch-action:manipulation;font-family:inherit}
+.mode.on{border-color:#ffd84a;color:#241a00;background:#ffd84a}
+.mode:active{transform:translateY(1px)}
+.modehint{font-size:12px;color:#a99fd6;margin:8px 0 4px;line-height:1.45}
 h2{font-size:28px;margin-bottom:6px}
 .sub{color:#b8b0d8;font-size:14px;margin-bottom:10px}
 .btn{display:block;width:100%;margin:10px 0 0;padding:14px;border:none;border-radius:16px;font-size:18px;font-weight:800;color:#fff;background:#3a3263;cursor:pointer;touch-action:manipulation}
