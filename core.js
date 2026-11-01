@@ -39,7 +39,12 @@
     frugal:  { kind: "relic", name: "节俭",   icon: "✂", desc: "每关少 1 发，但门槛 -35%" },
     double:  { kind: "relic", name: "双响",   icon: "‼", desc: "每关第一发弹珠数量翻倍" },
     plusball:{ kind: "up",    name: "+2 弹珠", icon: "+2", desc: "本局永久多 2 颗弹珠", repeat: true },
-    sight:   { kind: "up",    name: "鹰眼",   icon: "👁", desc: "瞄准线多预览一次反弹", repeat: true, max: 2 }
+    sight:   { kind: "up",    name: "鹰眼",   icon: "👁", desc: "瞄准线多预览一次反弹", repeat: true, max: 2 },
+    shieldstart:{ kind: "relic", name: "开局护底", icon: "🛡", desc: "开局自带一次漏球不扣命", paddleOnly: true },
+    slowcap:{ kind: "relic", name: "胶囊缓落", icon: "☁", desc: "技能胶囊落得更慢，更容易接住", paddleOnly: true },
+    widebase:{ kind: "relic", name: "宽板", icon: "▬", desc: "挡板基础宽度略增", paddleOnly: true },
+    stickstart:{ kind: "relic", name: "开局粘板", icon: "📎", desc: "每关开局 15 秒，球会粘在挡板上", paddleOnly: true },
+    extralife:{ kind: "up", name: "多 1 条命", icon: "♥", desc: "立刻多 1 条命", paddleOnly: true, repeat: true, max: 2 }
   };
   var BOSS_RULES = {
     armor: { name: "坚甲", desc: "只有撞过墙的弹珠才能伤到 Boss；先打破绽砖可破甲" },
@@ -125,7 +130,7 @@
     // 无左右墙拿掉了贴墙刷倍，门槛下调，避免正打打不穿分数门。
     var stageRule = run && run.randomMode ? ruleAt(run, k) : null;
     if ((run.cards && run.cards.frugal) || stageRule === "frugal") t *= 0.65;
-    if (stageRule === "nowalls") t *= 0.15;
+    if (stageRule === "nowalls" && !(run && run.paddle)) t *= 0.15;
     if (!isFinite(t) || t !== t) t = 160000;
     return Math.max(10, Math.round(Math.min(t, 500000) / 10) * 10);
   }
@@ -207,9 +212,22 @@
       phase: "aim", ev: [], maxMult: 1, marks: [], safety: opts.safety ? 1 : 0, shotT: 0, acc: 0,
       shotsLeft: 5, shotIdx: 0, shotPts: 0, reroll: 2, offer: null, bossRule: null, bricksBroken: 0, endless: false,
       daily: !!opts.daily, dirty: true, map: null, lostBy: 0, trapPattern: null, breached: false, bossWeak: false,
-      randomMode: !!opts.random, rule: null
+      randomMode: !!opts.random, rule: null, paddle: !!opts.paddle
     };
+    if (run.paddle) run.randomMode = true;
     run.rule = ruleAt(run, 1);
+    if (run.paddle) {
+      run.lives = 3;
+      run.paddleX = W / 2;
+      run.skill = null;
+      run.skillT = 0;
+      run.shield = 0;
+      run.lasers = [];
+      run.capsule = null;
+      run.balls = 1;
+      startPaddleStage(run);
+      return run;
+    }
     run.threshold = threshold(run, 1);
     buildTrapBoard(run, 4);
     run.phase = "aim";
@@ -566,6 +584,11 @@
     if (b.type === "boss" && run.bossRule === "armor" && !run.bossWeak && ball && ball.walls === 0 && src === "ball") {
       run.ev.push({ t: "clank", x: ball.x, y: ball.y }); b.flash = 0.5; return;
     }
+    if (run.paddle && b.locked && b.type !== "gate" && gatesAlive(run) > 0) {
+      if (ball) run.ev.push({ t: "clank", x: ball.x, y: ball.y });
+      b.flash = 0.35; return;
+    }
+    if (run.paddle && run.skill === "power" && run.skillT > 0 && src === "ball") dmg = Math.max(dmg, 2);
     // Locked zone: area effects chip only while sealed (physical wall is main gate; this stops cheese clears)
     if (b.locked && isSealed(run) && (src === "bomb" || src === "fire")) {
       dmg = Math.min(1, dmg);
@@ -586,8 +609,10 @@
     // Gate hits score a bit extra so aiming the gap feels rewarded
     if (b.type === "gate" && src === "ball") pts = Math.round(pts * 1.5);
     if (pts > 0 && b.loot) pts = Math.round(pts * 1.6);
-    if (pts > 0 && ruleActive(run, "slowmo")) pts = Math.round(pts * 2);
-    if (pts > 0 && ruleActive(run, "nowalls")) pts = Math.round(pts * 5);
+    if (pts > 0 && b.hard) pts = Math.round(pts * 1.35);
+    if (pts > 0 && ruleActive(run, "slowmo")) pts = Math.round(pts * (run.paddle ? 1.5 : 2));
+    if (pts > 0 && ruleActive(run, "nowalls") && !run.paddle) pts = Math.round(pts * 5);
+    if (pts > 0 && run.paddle && run.skill === "short" && run.skillT > 0) pts = Math.round(pts * 2);
     b.hp -= hpDmg; b.flash = 1;
     if (!isFinite(pts) || pts !== pts || pts < 0) pts = 0;
     pts = Math.min(HIT_CAP, pts);
@@ -604,12 +629,20 @@
       run.ev.push({ t: "break", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2, type: b.type, w: rc.w, h: rc.h,
         fire: !!(ball && ball.fire), split: !!(ball && ball.split), piercer: !!(ball && ball.piercer) });
       if (b.type === "gold") { run.coins += 2; run.ev.push({ t: "coin", x: rc.x + rc.w / 2, y: rc.y, n: 2 }); }
-      if (b.type === "plus") { run.balls += 1; run.ev.push({ t: "plus", x: rc.x + rc.w / 2, y: rc.y }); }
+      if (b.type === "plus") {
+        if (run.paddle) { run.ev.push({ t: "plus", x: rc.x + rc.w / 2, y: rc.y }); giveSkill(run, "multi"); }
+        else { run.balls += 1; run.ev.push({ t: "plus", x: rc.x + rc.w / 2, y: rc.y }); }
+      }
       if (b.type === "bomb") explode(run, b, ball, 0);
       if (b.keystone) {
-        var unlocked = unlockBoard(run);
-        run.ev.push({ t: "breach", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2, unlocked: unlocked });
+        if (run.paddle && gatesAlive(run) > 0) {
+          run.ev.push({ t: "gate", x: rc.x + rc.w / 2, y: rc.y, left: gatesAlive(run) });
+        } else {
+          var unlocked = unlockBoard(run);
+          run.ev.push({ t: "breach", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2, unlocked: unlocked });
+        }
       }
+      if (run.paddle && b.type !== "gate" && b.type !== "boss") maybeDropCapsule(run, rc);
       if (b.type === "weak") {
         run.bossWeak = true;
         run.ev.push({ t: "weakBreak", x: rc.x + rc.w / 2, y: rc.y + rc.h / 2 });
@@ -731,6 +764,7 @@
   }
 
   function update(run, dt) {
+    if (run.paddle && (run.phase === "paddle" || run.phase === "launch")) { paddleUpdate(run, dt); return; }
     if (run.phase !== "fly") return;
     run.acc += dt;
     while (run.acc >= SUB && run.phase === "fly") { run.acc -= SUB; tick(run, SUB); }
@@ -847,7 +881,10 @@
     var nb = 0, nr = 0;
     Object.keys(run.cards).forEach(function (k) { if (CARDS[k].kind === "ball") nb++; if (CARDS[k].kind === "relic") nr++; });
     return Object.keys(CARDS).filter(function (k) {
-      var c = CARDS[k]; if (c.repeat) return !(c.max && (run.cards[k] || 0) >= c.max);
+      var c = CARDS[k];
+      if (c.paddleOnly && !run.paddle) return false;
+      if (run.paddle && (k === "plusball" || k === "sight" || k === "double" || k === "split" || k === "frugal")) return false;
+      if (c.repeat) return !(c.max && (run.cards[k] || 0) >= c.max);
       if (run.cards[k]) return false; if (c.kind === "ball" && nb >= 3) return false; if (c.kind === "relic" && nr >= 5) return false; return true;
     });
   }
@@ -868,10 +905,13 @@
       run.cards[key] = (run.cards[key] || 0) + 1;
       if (key === "plusball") run.balls += 2;
       if (key === "sight") run.sight++;
+      if (key === "extralife") run.lives = (run.lives || 0) + 1;
+      if (key === "shieldstart") run.shield = (run.shield || 0) + 1;
     }
     startStage(run);
   }
   function startStage(run) {
+    if (run.paddle) { startPaddleStage(run); return; }
     var k = run.stage;
     run.score = 0; run.greedy = false; run.shotIdx = 0; run.offer = null; run.rerolled = false;
     run.rule = ruleAt(run, k);
@@ -964,12 +1004,530 @@
     return Math.round(n).toLocaleString("en-US");
   }
 
+  var PADDLE_Y = 1168, PADDLE_H = 22;
+  var SKILLS = {
+    multi:  { name: "分身", kind: "good", desc: "临时再出 2 颗球，掉多余的不扣命" },
+    power:  { name: "重击", kind: "good", desc: "12 秒内每下伤害 +1", t: 12 },
+    refill: { name: "补砖雨", kind: "good", desc: "顶上立刻补两行高分砖" },
+    wide:   { name: "加长", kind: "good", desc: "挡板变宽 15 秒", t: 15 },
+    short:  { name: "短板赌倍", kind: "risk", desc: "挡板变短，但这阵得分 ×2", t: 12 },
+    punch:  { name: "强弹", kind: "good", desc: "反弹更快、角度更开", t: 10 },
+    stick:  { name: "粘板", kind: "good", desc: "球粘在挡板上，松手再发", t: 15 },
+    slow:   { name: "子弹时间", kind: "good", desc: "球变慢，拖挡板仍是全速", t: 8 },
+    laser:  { name: "激光", kind: "good", desc: "点按从挡板两端射激光", t: 10 },
+    fire:   { name: "火球", kind: "good", desc: "撞砖溅到旁边，并能穿一格", t: 8 },
+    shield: { name: "护底", kind: "good", desc: "下一次漏球不扣命" },
+    thru:   { name: "穿透", kind: "good", desc: "球穿过砖，不反弹", t: 6 }
+  };
+  var SKILL_IDS = ["multi", "power", "refill", "wide", "short", "punch", "stick", "slow", "laser", "fire", "shield", "thru"];
+  var PADDLE_RULES = {
+    warmup: { name: "热身", desc: "一颗球，把图案清掉" },
+    goldrain: { name: "黄金雨", desc: "图案里的金砖大约翻倍" },
+    mirror: { name: "镜像墙", desc: "左右是传送门，出去从另一边进来" },
+    slowmo: { name: "慢动作", desc: "球约 0.7 倍速，得分 ×1.5" },
+    nowalls: { name: "无左右墙", desc: "球出侧面会直直落下，还能接" },
+    billiard: { name: "先弹后算", desc: "弹出后、撞墙前不计分；撞墙后倍率 +3" },
+    doubledrop: { name: "双倍下压", desc: "大约每 12 秒，图案下移一行" },
+    frugal: { name: "节俭关", desc: "本关少 1 条命，清图金币更多" },
+    bombtide: { name: "炸弹潮", desc: "图案里的炸弹砖变多" },
+    hardgate: { name: "硬核门闩", desc: "有门闩则更硬；没有则图案更硬、分更高" },
+    ceiling: { name: "顶墙加倍", desc: "撞顶墙倍率 ×2，和回力镖再乘一次" }
+  };
+  var PADDLE_SHAPES = [
+    { id: "arrow", name: "箭头", min: 1, rows: ["...K...", "..###..", ".#####.", "...#...", "...#...", "..###.."] },
+    { id: "ring", name: "圆环", min: 1, rows: [".#####.", "##...##", "#.....#", "#.....#", "#.....#", "##...##", ".###K##"] },
+    { id: "diamond", name: "钻石", min: 1, rows: ["...#...", "..#.#..", ".#...#.", "#..G..#", ".#...#.", "..#.#..", "...K..."] },
+    { id: "heart", name: "爱心", min: 2, rows: [".##.##.", "#######", "##G#G##", ".#####.", "..###..", "...#..."] },
+    { id: "smile", name: "笑脸", min: 2, rows: ["..###..", ".#####.", "##.#.##", ".#####.", "##...##", ".#####.", "..###.."] },
+    { id: "H", name: "字母 H", min: 2, rows: ["#.....#", "#.....#", "#.....#", "###K###", "#.....#", "#.....#"] },
+    { id: "A", name: "字母 A", min: 4, rows: ["...#...", "..#.#..", ".#...#.", "#######", "#.....#", "#..G..#"] },
+    { id: "S", name: "字母 S", min: 4, rows: [".#####.", "#......", "#......", ".#####.", "......#", "......#", ".#####."] },
+    { id: "Z", name: "字母 Z", min: 4, rows: ["#######", ".....#.", "....#..", "...#...", "..#....", ".#.....", "#######"] },
+    { id: "X", name: "字母 X", min: 4, rows: ["#.....#", ".#...#.", "..#.#..", "...K...", "..#.#..", ".#.K.#.", "#.....#"] },
+    { id: "cat", name: "小猫", min: 4, rows: ["#.....#", ".#...#.", "#G...G#", "#..K..#", "#######", ".#####.", ".#...#."] },
+    { id: "zhong", name: "字形 中", min: 8, rows: ["...#...", ".#####.", ".#.K.#.", ".#####.", "...#...", "...K...", "...#..."] },
+    { id: "invader", name: "入侵者", min: 8, rows: ["..#.#..", ".#K.K#.", "#######", "##.#.##", "#.#K#.#", "..#.#..", ".#...#."] }
+  ];
+
+  function gatesAlive(run) {
+    var n = 0;
+    for (var i = 0; i < run.bricks.length; i++) {
+      var b = run.bricks[i];
+      if (b.keystone && b.hp > 0) n++;
+    }
+    return n;
+  }
+  function gateRoll(seed, stage) {
+    if (isBossStage(stage)) return 0;
+    if (stage <= 1) return 1;
+    var u = mulberry(hashStr("gates|" + seed + "|" + stage))[1];
+    var cuts = stage <= 3 ? [0.30, 0.85, 1] : stage <= 6 ? [0.25, 0.65, 0.90, 1] : stage <= 30 ? [0.22, 0.60, 0.88, 1] : [0.18, 0.50, 0.82, 1];
+    var val = [0, 1, 2, 3];
+    for (var i = 0; i < cuts.length; i++) if (u < cuts[i]) return val[i];
+    return 1;
+  }
+  function countK(rows) {
+    var n = 0;
+    for (var r = 0; r < rows.length; r++) for (var c = 0; c < rows[r].length; c++) if (rows[r].charAt(c) === "K") n++;
+    return n;
+  }
+  function paddleBodyHp(stage) {
+    if (stage <= 1) return 1;
+    if (stage <= 4) return 2;
+    if (stage <= 12) return 3;
+    return Math.min(6, 3 + Math.floor((stage - 12) / 10));
+  }
+  function buildShapeBoard(run) {
+    var k = run.stage;
+    if (k <= 1) {
+      run.shapeId = "arrow";
+      run.shapeName = "箭头";
+      run.bricks = [];
+      var teach = ["...K...", "..###..", "..#G#.."];
+      for (var r = 0; r < teach.length; r++) for (var c = 0; c < 7; c++) {
+        var ch = teach[r].charAt(c);
+        if (ch === ".") continue;
+        if (ch === "K") pushBrick(run, c, r, { type: "gate", hp: 1, keystone: true });
+        else if (ch === "G") pushBrick(run, c, r, { type: "gold", hp: 1 });
+        else pushBrick(run, c, r, { type: "n", hp: 1 });
+      }
+      run.bonusLine = 40;
+      run.threshold = 40;
+      run.trapPattern = "arrow";
+      run.dirty = true;
+      return;
+    }
+    var want = gateRoll(run.seed, k);
+    var pool = [];
+    for (var i = 0; i < PADDLE_SHAPES.length; i++) {
+      var s = PADDLE_SHAPES[i];
+      if (s.min > k) continue;
+      if (countK(s.rows) < want) continue;
+      pool.push(s);
+    }
+    if (!pool.length) {
+      want = 1;
+      for (i = 0; i < PADDLE_SHAPES.length; i++) if (countK(PADDLE_SHAPES[i].rows) >= 1 && PADDLE_SHAPES[i].min <= k) pool.push(PADDLE_SHAPES[i]);
+    }
+    if (!pool.length) pool = PADDLE_SHAPES.slice();
+    var u = mulberry(hashStr("shape|" + run.seed + "|" + k))[1];
+    var shape = pool[Math.floor(u * pool.length) % pool.length];
+    run.shapeId = shape.id;
+    run.shapeName = shape.name;
+    run.bricks = [];
+    var gates = 0, gateHpEach = 1;
+    var planned = Math.min(want, countK(shape.rows));
+    var baseG = k <= 1 ? 2 : k <= 4 ? 3 : Math.min(8, 3 + Math.floor(k / 6));
+    gateHpEach = Math.max(2, Math.round(baseG * 1.15 / Math.max(1, planned || 1)));
+    if (run.rule === "hardgate" && planned > 0) gateHpEach = Math.max(2, Math.round(gateHpEach * 1.8));
+    var hp0 = paddleBodyHp(k);
+    var used = 0;
+    for (var r = 0; r < shape.rows.length; r++) {
+      var line = shape.rows[r];
+      for (var c = 0; c < line.length && c < 7; c++) {
+        var ch = line.charAt(c);
+        if (ch === ".") continue;
+        var type = "n", hp = hp0, key = false, locked = false, hard = false;
+        if (ch === "G") { type = "gold"; hp = Math.max(1, hp0); }
+        else if (ch === "K") {
+          used++;
+          if (used <= planned) { type = "gate"; hp = gateHpEach; key = true; gates++; }
+          else type = "n";
+        } else if (ch === "L") { locked = planned > 0; hp = hp0 + 1; }
+        if (run.rule === "hardgate" && planned === 0) { hp = Math.max(1, Math.round(hp * 1.4)); hard = true; }
+        pushBrick(run, c, r, { type: type, hp: hp, locked: locked, keystone: key });
+        if (hard) run.bricks[run.bricks.length - 1].hard = true;
+        if (key) run.bricks[run.bricks.length - 1].keystone = true;
+      }
+    }
+    if (run.rule === "goldrain" || run.rule === "bombtide") {
+      var normals = [];
+      for (i = 0; i < run.bricks.length; i++) if (run.bricks[i].type === "n" && !run.bricks[i].keystone) normals.push(run.bricks[i]);
+      var extra = run.rule === "goldrain" ? Math.max(2, Math.min(6, normals.length >> 1)) : Math.max(2, Math.min(5, Math.ceil(normals.length / 3)));
+      for (i = 0; i < extra && normals.length; i++) {
+        var j = Math.floor(rndRule(run) * normals.length);
+        normals[j].type = run.rule === "goldrain" ? "gold" : "bomb";
+        normals.splice(j, 1);
+      }
+    }
+    var budget = 0;
+    for (i = 0; i < run.bricks.length; i++) {
+      var b = run.bricks[i];
+      var pts = b.type === "gate" ? b.hp * 12 : b.hp * (b.hp + 1) / 2 * 4;
+      if (b.hard) pts *= 1.35;
+      budget += pts;
+    }
+    if (run.rule === "slowmo") budget *= 1.5;
+    if (billiardOn(run)) budget *= 0.72;
+    run.bonusLine = Math.max(10, Math.round(budget * 0.8 / 10) * 10);
+    run.threshold = run.bonusLine;
+    run.trapPattern = shape.id;
+    run.dirty = true;
+  }
+  function buildPaddleBoss(run) {
+    beginStageRng(run);
+    var keys = Object.keys(BOSS_RULES);
+    run.bossRule = keys[Math.floor(rnd(run, "rb") * keys.length)];
+    var hp = Math.round(softCap(run.stage, 28, 64, 0.03));
+    run.bricks = [];
+    run.bricks.push({ c: 2, r: 1, cw: 3, ch: 2, hp: hp, max: hp, type: "boss", flash: 0, locked: false, keystone: false });
+    pushBrick(run, 5, 3, { type: "weak", hp: 3, keystone: false });
+    run.shapeId = "boss";
+    run.shapeName = "Boss";
+    run.threshold = 0;
+    run.bonusLine = 0;
+    run.trapPattern = "boss";
+    run.dirty = true;
+  }
+  function stickBall(run) {
+    var mult = startMult(run);
+    run.flying = [{ x: run.paddleX, y: PADDLE_Y - R - 2, vx: 0, vy: 0, mult: mult, walls: 0, stuck: true, stickOff: 0, pierce: 0, ign: null, trail: [], fire: false, split: false, piercer: false }];
+    run.phase = "launch";
+  }
+  function paddleWidth(run) {
+    var w = 156;
+    if (run.cards && run.cards.widebase) w *= 1.15;
+    if (run.skill === "wide" && run.skillT > 0) w *= 1.7;
+    if (run.skill === "short" && run.skillT > 0) w *= 0.55;
+    return Math.max(70, Math.min(300, w));
+  }
+  function paddleMove(run, x) {
+    if (!run || !run.paddle) return;
+    var w = paddleWidth(run);
+    run.paddleX = Math.max(w / 2, Math.min(W - w / 2, x));
+    if (run.phase === "launch") {
+      for (var i = 0; i < run.flying.length; i++) {
+        var b = run.flying[i];
+        if (b.stuck) { b.x = run.paddleX + (b.stickOff || 0); b.y = PADDLE_Y - R - 2; }
+      }
+    }
+  }
+  function paddleLaunch(run) {
+    if (!run || !run.paddle || run.phase !== "launch") return false;
+    var sp = 640;
+    var any = false;
+    for (var i = 0; i < run.flying.length; i++) {
+      var b = run.flying[i];
+      if (!b.stuck) continue;
+      any = true;
+      b.stuck = false;
+      var off = (b.stickOff || 0) / (paddleWidth(run) / 2);
+      off = Math.max(-1, Math.min(1, off));
+      var ang = Math.PI / 2 - off * 0.5;
+      b.vx = Math.cos(ang) * sp;
+      b.vy = -Math.sin(ang) * sp;
+      b.walls = 0;
+    }
+    if (!any) return false;
+    run.phase = "paddle";
+    return true;
+  }
+  function paddleFire(run) {
+    if (!run || !run.paddle || run.skill !== "laser" || run.skillT <= 0) return false;
+    if (run.laserCd > 0) return false;
+    var w = paddleWidth(run);
+    run.lasers = run.lasers || [];
+    run.lasers.push({ x: run.paddleX - w * 0.35, y: PADDLE_Y - 8 });
+    run.lasers.push({ x: run.paddleX + w * 0.35, y: PADDLE_Y - 8 });
+    run.laserCd = 0.18;
+    run.ev.push({ t: "laser" });
+    return true;
+  }
+  function paddleBallSpeed(run) {
+    var s = 640 + Math.min(160, (run.brickHits || 0) * 4);
+    var f = 1;
+    if (ruleActive(run, "slowmo")) f *= 0.7;
+    if (run.skill === "slow" && run.skillT > 0) f *= 0.45;
+    if (f < 0.35) f = 0.35;
+    return s * f;
+  }
+  function keepSpeed(ball, sp) {
+    var mag = Math.hypot(ball.vx, ball.vy) || sp;
+    ball.vx *= sp / mag; ball.vy *= sp / mag;
+    var min = 0.28 * sp;
+    if (Math.abs(ball.vy) < min) {
+      ball.vy = (ball.vy >= 0 ? 1 : -1) * min;
+      var sx = Math.sqrt(Math.max(0, sp * sp - min * min));
+      ball.vx = (ball.vx >= 0 ? 1 : -1) * sx;
+    }
+  }
+  function giveSkill(run, id) {
+    var sk = SKILLS[id];
+    if (!sk) return;
+    if (id === "multi") {
+      var src = null;
+      for (var i = 0; i < run.flying.length; i++) if (!run.flying[i].stuck) { src = run.flying[i]; break; }
+      if (!src && run.flying[0]) src = run.flying[0];
+      var sp = paddleBallSpeed(run);
+      for (var k = 0; k < 2; k++) {
+        var ang = (0.4 + k * 0.5);
+        run.flying.push({ x: src ? src.x : run.paddleX, y: src ? src.y : PADDLE_Y - 80, vx: Math.cos(ang) * sp * (k ? 1 : -1), vy: -sp * 0.8, mult: src ? src.mult : 1, walls: src ? src.walls : 1, stuck: false, pierce: 0, ign: null, trail: [], fire: false, split: true, piercer: false, extra: true });
+      }
+    } else if (id === "refill") paddleRefill(run);
+    else if (id === "shield") run.shield = (run.shield || 0) + 1;
+    else { run.skill = id; run.skillT = sk.t || 8; }
+    run.ev.push({ t: "skill", id: id, name: sk.name });
+  }
+  function maybeDropCapsule(run, rc) {
+    if (run.stage <= 1 || run.capsule) return;
+    var p = run.cards && run.cards.slowcap ? 0.22 : 0.16;
+    if (rndRule(run) > p) return;
+    var id = SKILL_IDS[Math.floor(rndRule(run) * SKILL_IDS.length)];
+    run.capsule = { x: rc.x + rc.w / 2, y: rc.y, id: id, vy: run.cards && run.cards.slowcap ? 110 : 190 };
+  }
+  function paddleRefill(run) {
+    var maxR = -1;
+    for (var i = 0; i < run.bricks.length; i++) if (run.bricks[i].hp > 0 && run.bricks[i].r > maxR) maxR = run.bricks[i].r;
+    if (maxR >= 8) return;
+    for (i = 0; i < run.bricks.length; i++) run.bricks[i].r += 2;
+    for (var r = 0; r < 2; r++) for (var c = 0; c < 7; c++) {
+      if ((c + r) % 2) continue;
+      var gold = (c + r) % 3 === 0;
+      pushBrick(run, c, r, { type: gold ? "gold" : "n", hp: gold ? 2 : paddleBodyHp(run.stage), locked: false });
+    }
+    run.dirty = true;
+    run.ev.push({ t: "refill" });
+  }
+  function paddleMiss(run) {
+    if (run.shield > 0) {
+      run.shield--;
+      run.ev.push({ t: "shield" });
+      stickBall(run);
+      return;
+    }
+    run.lives--;
+    run.ev.push({ t: "life", n: run.lives });
+    if (run.lives <= 0) { lose(run, "life"); return; }
+    stickBall(run);
+  }
+  function paddleClear(run) {
+    if (isBossStage(run.stage)) return !bossOf(run);
+    if (!run.bricks.length) return false;
+    for (var i = 0; i < run.bricks.length; i++) if (run.bricks[i].hp > 0) return false;
+    return true;
+  }
+  function finishPaddleStage(run) {
+    var bonus = run.bonusLine > 0 && run.score >= run.bonusLine;
+    var gain = 4 + (bonus ? 6 : 0);
+    if (run.rule === "frugal") gain += 4;
+    var mark = isBossStage(run.stage) ? "👑" : (bonus ? "🟨" : "🟩");
+    run.coins += gain;
+    run.marks.push(mark);
+    run.ev.push({ t: "clear", coins: gain, stage: run.stage, bonus: bonus });
+    run.stage++;
+    run.score = 0;
+    run.offer = makeOffer(run);
+    run.reroll = 2;
+    run.flying = [];
+    run.capsule = null;
+    run.lasers = [];
+    if (!run.offer || !run.offer.length) { run.phase = "pick"; pick(run, null); return; }
+    run.phase = "pick";
+  }
+  function bouncePaddle(run, ball) {
+    var w = paddleWidth(run);
+    var t = (ball.x - run.paddleX) / (w / 2);
+    t = Math.max(-1, Math.min(1, t));
+    var spread = run.skill === "punch" && run.skillT > 0 ? 1.15 : 0.95;
+    var ang = Math.PI / 2 - t * spread;
+    if (ang < 0.42) ang = 0.42;
+    if (ang > Math.PI - 0.42) ang = Math.PI - 0.42;
+    var sp = paddleBallSpeed(run) * (run.skill === "punch" && run.skillT > 0 ? 1.25 : 1);
+    ball.vx = Math.cos(ang) * sp;
+    ball.vy = -Math.abs(Math.sin(ang) * sp);
+    ball.y = PADDLE_Y - R - 1;
+    if (run.skill === "stick" && run.skillT > 0) {
+      ball.stuck = true;
+      ball.stickOff = Math.max(-w / 2 + 8, Math.min(w / 2 - 8, ball.x - run.paddleX));
+      ball.vx = 0; ball.vy = 0;
+      run.phase = "launch";
+    }
+  }
+  function hitPaddleBrick(run, ball) {
+    var c0 = Math.floor((ball.x - R) / CW), c1 = Math.floor((ball.x + R) / CW);
+    var r0 = Math.floor((ball.y - R - TOP) / ROWH), r1 = Math.floor((ball.y + R - TOP) / ROWH);
+    var best = null, bd = 1e9, bcx = 0, bcy = 0, seen = [];
+    if (ball.ign) {
+      var ir = rect(ball.ign), ox = Math.max(ir.x, Math.min(ball.x, ir.x + ir.w)), oy = Math.max(ir.y, Math.min(ball.y, ir.y + ir.h));
+      if (ball.ign.hp <= 0 || Math.hypot(ball.x - ox, ball.y - oy) > R + 2) ball.ign = null;
+    }
+    for (var r = Math.max(0, r0); r <= Math.min(ROWS + 2, r1); r++) for (var c = Math.max(0, c0); c <= Math.min(COLS - 1, c1); c++) {
+      var b = at(run, c, r); if (!b || b.hp <= 0 || seen.indexOf(b) >= 0 || b === ball.ign) continue; seen.push(b);
+      var q = rect(b), cx = Math.max(q.x, Math.min(ball.x, q.x + q.w)), cy = Math.max(q.y, Math.min(ball.y, q.y + q.h));
+      var d = Math.hypot(ball.x - cx, ball.y - cy);
+      if (d < R && d < bd) { bd = d; best = b; bcx = cx; bcy = cy; }
+    }
+    if (!best) { ball.stuckN = 0; return false; }
+    if (ball.stuckBrick === best) ball.stuckN = (ball.stuckN || 0) + 1;
+    else { ball.stuckBrick = best; ball.stuckN = 1; }
+    if (ball.stuckN > 6) {
+      var sp2 = paddleBallSpeed(run);
+      ball.vy = -Math.abs(sp2);
+      ball.vx *= 0.4;
+      ball.y -= R + 2;
+      ball.stuckN = 0;
+      ball.ign = best;
+      return true;
+    }
+    var dmg = 1;
+    var thru = run.skill === "thru" && run.skillT > 0 && best.type !== "gate" && best.type !== "boss";
+    var fire = run.skill === "fire" && run.skillT > 0;
+    if (ball.vy < 0 && best.type !== "boss") {
+      damage(run, best, ball, dmg, "ball");
+      if (best.hp <= 0) {
+        ball.ign = best;
+        if (fire) splashFire(run, best, ball);
+        run.brickHits = (run.brickHits || 0) + 1;
+        return true;
+      }
+    }
+    if (thru || (fire && best.type !== "gate" && best.type !== "boss" && !ball.pierced)) {
+      ball.ign = best;
+      if (fire) ball.pierced = true;
+      damage(run, best, ball, dmg, "ball");
+      if (fire) splashFire(run, best, ball);
+      return true;
+    }
+    var nx, ny;
+    if (bd > 1e-6) { nx = (ball.x - bcx) / bd; ny = (ball.y - bcy) / bd; }
+    else { nx = 0; ny = ball.vy > 0 ? -1 : 1; }
+    ball.x = bcx + nx * (R + 0.4); ball.y = bcy + ny * (R + 0.4);
+    var dot = ball.vx * nx + ball.vy * ny;
+    if (dot < 0) { ball.vx -= 2 * dot * nx; ball.vy -= 2 * dot * ny; }
+    damage(run, best, ball, dmg, "ball");
+    if (fire) splashFire(run, best, ball);
+    run.brickHits = (run.brickHits || 0) + 1;
+    keepSpeed(ball, paddleBallSpeed(run));
+    return true;
+  }
+  function splashFire(run, b, ball) {
+    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+      var nb = at(run, b.c + d[0], b.r + d[1]);
+      if (nb && nb !== b && nb.hp > 0) damage(run, nb, ball, 1, "fire");
+    });
+  }
+  function stepPaddleBall(run, ball, dt) {
+    if (ball.stuck) {
+      ball.x = run.paddleX + (ball.stickOff || 0);
+      ball.y = PADDLE_Y - R - 2;
+      return;
+    }
+    var sp = paddleBallSpeed(run);
+    keepSpeed(ball, sp);
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    var rule = run.rule;
+    if (rule === "mirror") {
+      var span = W - 2 * R;
+      if (ball.x < R) ball.x += span;
+      else if (ball.x > W - R) ball.x -= span;
+    } else if (rule === "nowalls") {
+      if (ball.x < R || ball.x > W - R) {
+        ball.vx = 0;
+        ball.vy = Math.abs(sp);
+        ball.x = Math.max(R, Math.min(W - R, ball.x));
+      }
+    } else {
+      if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); wallBounce(run, ball, "side"); }
+      else if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); wallBounce(run, ball, "side"); }
+    }
+    if (ball.y < TOP + R) { ball.y = TOP + R; ball.vy = Math.abs(ball.vy); wallBounce(run, ball, "top"); }
+    keepSpeed(ball, sp);
+    var w = paddleWidth(run);
+    if (ball.vy > 0 && ball.y + R >= PADDLE_Y && ball.y <= PADDLE_Y + PADDLE_H + 10 && ball.x >= run.paddleX - w / 2 - R && ball.x <= run.paddleX + w / 2 + R) {
+      bouncePaddle(run, ball);
+      return;
+    }
+    if (ball.y > PADDLE_Y + 48) ball.dead = true;
+    else hitPaddleBrick(run, ball);
+  }
+  function paddleUpdate(run, dt) {
+    if (run.skillT > 0) {
+      run.skillT -= dt;
+      if (run.skillT <= 0) { run.skillT = 0; run.skill = null; }
+    }
+    if (run.laserCd > 0) run.laserCd -= dt;
+    if (run.phase === "paddle" && ruleActive(run, "doubledrop")) {
+      run.dropAcc = (run.dropAcc || 0) + dt;
+      if (run.dropAcc >= 12) {
+        run.dropAcc = 0;
+        for (var i = 0; i < run.bricks.length; i++) run.bricks[i].r++;
+        var crushed = false;
+        run.bricks = run.bricks.filter(function (b) { if (b.r >= 12) { crushed = true; return false; } return b.hp > 0; });
+        run.dirty = true;
+        if (crushed && run.phase === "paddle") paddleMiss(run);
+      }
+    }
+    var sub = 1 / 180, acc = run.acc + dt;
+    if (run.phase === "launch") {
+      for (i = 0; i < run.flying.length; i++) if (run.flying[i].stuck) {
+        run.flying[i].x = run.paddleX + (run.flying[i].stickOff || 0);
+        run.flying[i].y = PADDLE_Y - R - 2;
+      }
+    }
+    while (acc >= sub && run.phase === "paddle") {
+      acc -= sub;
+      for (i = run.flying.length - 1; i >= 0; i--) stepPaddleBall(run, run.flying[i], sub);
+      run.flying = run.flying.filter(function (b) { return !b.dead; });
+      if (run.capsule) {
+        var slow = (run.skill === "slow" && run.skillT > 0) ? 0.45 : 1;
+        run.capsule.y += run.capsule.vy * slow * sub;
+        var w = paddleWidth(run);
+        if (run.capsule.y >= PADDLE_Y && run.capsule.x >= run.paddleX - w / 2 && run.capsule.x <= run.paddleX + w / 2) {
+          giveSkill(run, run.capsule.id);
+          run.capsule = null;
+        } else if (run.capsule.y > H + 20) run.capsule = null;
+      }
+      if (run.lasers && run.lasers.length) {
+        for (i = run.lasers.length - 1; i >= 0; i--) {
+          var L = run.lasers[i];
+          L.y -= 980 * sub;
+          var bc = Math.floor(L.x / CW), br = Math.floor((L.y - TOP) / ROWH);
+          var brick = at(run, bc, br);
+          if (brick && brick.hp > 0 && brick.type !== "boss") { damage(run, brick, null, 1, "laser"); run.lasers.splice(i, 1); }
+          else if (L.y < TOP) run.lasers.splice(i, 1);
+        }
+      }
+      if (run.phase === "paddle" && paddleClear(run)) { finishPaddleStage(run); break; }
+      if (run.phase === "paddle" && run.flying.length === 0) { paddleMiss(run); break; }
+    }
+    run.acc = acc;
+    for (var k = 0; k < run.bricks.length; k++) if (run.bricks[k].flash > 0) run.bricks[k].flash -= dt * 6;
+  }
+  function startPaddleStage(run) {
+    var k = run.stage;
+    run.score = 0;
+    run.shotIdx = 0;
+    run.offer = null;
+    run.rerolled = false;
+    run.rule = isBossStage(k) ? null : ruleAt(run, k);
+    run.bossWeak = false;
+    run.flying = [];
+    run.queue = 0;
+    run.lasers = [];
+    run.capsule = null;
+    run.acc = 0;
+    run.dropAcc = 0;
+    run.laserCd = 0;
+    run.brickHits = 0;
+    run.skill = null;
+    run.skillT = 0;
+    if (!isFinite(run.paddleX)) run.paddleX = W / 2;
+    if (run.cards && run.cards.stickstart) { run.skill = "stick"; run.skillT = 15; }
+    if (run.rule === "frugal" && run.lives > 1) run.lives -= 1;
+    if (isBossStage(k)) buildPaddleBoss(run);
+    else buildShapeBoard(run);
+    stickBall(run);
+    run.phase = "launch";
+    run.ev.push({ t: "stage", stage: k, pattern: run.trapPattern, rule: run.rule });
+  }
+
   var API = { W: W, H: H, COLS: COLS, CW: CW, ROWH: ROWH, TOP: TOP, ROWS: ROWS, LINE_Y: LINE_Y, LAUNCH_Y: LAUNCH_Y, R: R, SPEED: SPEED,
     CARDS: CARDS, BOSS_RULES: BOSS_RULES, RULES: RULES, RULE_POOL: RULE_POOL, PATTERNS: PATTERNS, newRun: newRun, fire: fire, update: update, preview: preview, decide: decide, pick: pick,
     reroll: doReroll, continueEndless: continueEndless, rect: rect, lowestRow: lowestRow, bossOf: bossOf, shanghaiDate: shanghaiDate,
     shareText: shareText, fmtMult: fmtMult, fmtScore: fmtScore, hashStr: hashStr, clampAngle: clampAngle, startMult: startMult, recall: recall,
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
     isBossStage: isBossStage, softCap: softCap, ruleAt: ruleAt, unlockedRules: unlockedRules,
-    attainableScore: attainableScore, stageGoal: stageGoal, VERSION: "8" };
+    attainableScore: attainableScore, stageGoal: stageGoal, paddleMove: paddleMove, paddleLaunch: paddleLaunch, paddleFire: paddleFire, paddleWidth: paddleWidth,
+    SKILLS: SKILLS, PADDLE_RULES: PADDLE_RULES, gateRoll: gateRoll, PADDLE_Y: PADDLE_Y, VERSION: "9" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

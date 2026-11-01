@@ -39,34 +39,36 @@
   function toLogical(e) { var r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - ox) / scale, y: (e.clientY - r.top - oy) / scale }; }
 
   // ---------- game flow ----------
-  function playMode() { return ld("mode", "random") === "classic" ? "classic" : "random"; }
+  function playMode() { return ld("mode", "paddle") === "classic" ? "classic" : "paddle"; }
   function syncModeUi() {
     var m = playMode();
     var r = $("mRandom"), c = $("mClassic");
-    if (r) r.classList.toggle("on", m === "random");
+    if (r) r.classList.toggle("on", m === "paddle");
     if (c) c.classList.toggle("on", m === "classic");
     var hint = $("modeHint");
-    if (hint) hint.textContent = m === "random"
-      ? "自由模式：每关一条规则，打完再抽。每日挑战固定随机玩法，同一天种子相同。"
-      : "自由模式：经典规则，手感与数值和以前一样。每日挑战仍是随机玩法。";
+    if (hint) hint.textContent = m === "paddle"
+      ? "挡板左右拖，只有一颗球。漏接扣 1 条命，共 3 条。清完图案过关。每日挑战同一天种子相同。"
+      : "经典回合制：拖动瞄准、松手发射，数值和以前一样。";
     var free = $("bFree");
-    if (free) free.textContent = m === "random" ? "自由模式 · 随机" : "自由模式 · 经典";
+    if (free) free.textContent = m === "paddle" ? "自由一局 · 弹球" : "自由一局 · 经典";
   }
   function setMode(m) {
-    sv("mode", m === "classic" ? "classic" : "random");
+    sv("mode", m === "classic" ? "classic" : "paddle");
     syncModeUi();
   }
   function startRun(daily) {
     audio();
     var runs = ld("runs", 0);
     var seed = daily ? "daily-" + today : "free-" + Date.now() + "-" + Math.random();
-    var useRandom = !!daily || playMode() === "random";
-    run = B.newRun(seed, { daily: daily, safety: runs < 2, random: useRandom });
+    var paddle = !!daily || playMode() === "paddle";
+    run = B.newRun(seed, { daily: daily, safety: runs < 2, random: !paddle && false, paddle: paddle });
     sv("runs", runs + 1);
     if (daily) { var st = ld("streak", { last: "", n: 0 }); if (st.last !== today) { var y = B.shanghaiDate(new Date(Date.now() - 864e5)); st.n = st.last === y ? st.n + 1 : 1; st.last = today; sv("streak", st); } }
     parts = []; floats = []; big = null; fast = false; aiming = false;
     hideAll();
-    if (run.randomMode && run.rule && B.RULES[run.rule]) {
+    if (run.paddle && run.rule && B.PADDLE_RULES && B.PADDLE_RULES[run.rule]) {
+      banner = { t: 2, a: B.PADDLE_RULES[run.rule].name, b: B.PADDLE_RULES[run.rule].desc };
+    } else if (run.randomMode && run.rule && B.RULES[run.rule]) {
       banner = { t: 2, a: B.RULES[run.rule].name, b: B.RULES[run.rule].desc };
     } else {
       banner = { t: 2.4, a: "第 1 关", b: "先打门闩缺口 · 目标 " + run.threshold + " 分" };
@@ -78,13 +80,13 @@
     $("dDate").textContent = today.slice(5).replace("-", "/");
     syncModeUi();
     var st = ld("streak", { n: 0 }), db = ld("daily_" + today, null);
-    $("stats").innerHTML = "随机最高 " + ld("bestR", 0).toLocaleString() + " · 经典最高 " + ld("best", 0).toLocaleString() +
-      "<br>最高倍率 随机 ×" + B.fmtMult(ld("bestMultR", 1)) + " · 经典 ×" + B.fmtMult(ld("bestMult", 1)) +
+    $("stats").innerHTML = "弹球最高 " + ld("bestP", 0).toLocaleString() + " · 经典最高 " + ld("best", 0).toLocaleString() +
+      "<br>最高倍率 弹球 ×" + B.fmtMult(ld("bestMultP", 1)) + " · 经典 ×" + B.fmtMult(ld("bestMult", 1)) +
       "<br>通关 " + ld("wins", 0) + " 次 · 每日连续 " + (st.n || 0) + " 天" + (db != null ? "<br>今日每日挑战：" + db.toLocaleString() + " 分" : "");
   }
   $("bDaily").onclick = function () { startRun(true); };
   $("bFree").onclick = function () { startRun(false); };
-  $("mRandom").onclick = function () { setMode("random"); };
+    $("mRandom").onclick = function () { setMode("paddle"); };
   $("mClassic").onclick = function () { setMode("classic"); };
   $("bCash").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, true); $("decide").classList.add("hidden"); };
   $("bGreed").onclick = function () { if (!run || run.phase !== "decide") return; B.decide(run, false); $("decide").classList.add("hidden"); };
@@ -122,7 +124,8 @@
     var kinds = { ball: "弹珠", relic: "遗物", up: "强化" };
     $("pickTitle").textContent = "第 " + (run.stage - 1) + " 关通过！";
     var hint = "";
-    if (B.isBossStage(run.stage)) hint = " · 下一关是 Boss！";
+    if (run.paddle) hint = B.isBossStage(run.stage) ? " · 下一关是 Boss" : " · 下一关继续清图";
+    else if (B.isBossStage(run.stage)) hint = " · 下一关是 Boss！";
     else hint = " · 下一关目标 " + B.fmtScore(B.stageGoal(run, run.stage)) + " 分";
     $("pickSub").textContent = "三选一 · 金币 " + run.coins + hint;
     var offer = run.offer || [];
@@ -141,9 +144,10 @@
   function finish() {
     var cleared = !!run.won;
     var endlessDead = cleared && run.endless && run.why;
-    $("ovTitle").textContent = endlessDead ? "无尽终结" : cleared ? "通关！👑" : run.why === "crush" ? "被砖墙压垮了" : "差一点！";
+    $("ovTitle").textContent = endlessDead ? "无尽终结" : cleared ? "通关！👑" : run.why === "life" ? "球掉了" : run.why === "crush" ? "被砖墙压垮了" : "差一点！";
     var sub = "";
-    if (endlessDead && run.why === "score") sub = "第 " + run.stage + " 关还差 <b>" + B.fmtScore(run.lostBy) + "</b> 分 · 总分 " + B.fmtScore(run.total);
+    if (run.why === "life") sub = "3 条命用完了 · 总分 " + B.fmtScore(run.total);
+    else if (endlessDead && run.why === "score") sub = "第 " + run.stage + " 关还差 <b>" + B.fmtScore(run.lostBy) + "</b> 分 · 总分 " + B.fmtScore(run.total);
     else if (endlessDead && run.why === "crush") sub = "第 " + run.stage + " 关被压垮 · 总分 " + B.fmtScore(run.total);
     else if (endlessDead) sub = "总分 " + B.fmtScore(run.total);
     else if (!cleared && run.why === "score") sub = "还差 <b>" + B.fmtScore(run.lostBy) + "</b> 分就过关";
@@ -153,8 +157,8 @@
     $("ovSub").innerHTML = sub;
     $("ovShare").textContent = B.shareText(run, today);
     $("bEndless").classList.toggle("hidden", !(cleared && !run.endless && !run.why));
-    var scoreKey = run.randomMode ? "bestR" : "best";
-    var multKey = run.randomMode ? "bestMultR" : "bestMult";
+    var scoreKey = run.paddle ? "bestP" : (run.randomMode ? "bestR" : "best");
+    var multKey = run.paddle ? "bestMultP" : (run.randomMode ? "bestMultR" : "bestMult");
     if (run.total > ld(scoreKey, 0)) sv(scoreKey, run.total);
     if (run.maxMult > ld(multKey, 1)) sv(multKey, run.maxMult);
     if (cleared && !run.endless) sv("wins", ld("wins", 0) + 1);
@@ -257,6 +261,9 @@
           if (B.isBossStage(e.stage) && run.bossRule && B.BOSS_RULES[run.bossRule]) {
             var br = B.BOSS_RULES[run.bossRule];
             banner = { t: 3, a: "BOSS · " + br.name, b: br.desc + " · " + run.shotsLeft + " 发内击破" };
+          } else if (run.paddle && run.rule && B.PADDLE_RULES && B.PADDLE_RULES[run.rule]) {
+            var pr = B.PADDLE_RULES[run.rule];
+            banner = { t: 2, a: pr.name, b: pr.desc + (run.shapeName ? " · " + run.shapeName : "") };
           } else if (run.randomMode && run.rule && B.RULES[run.rule]) {
             banner = { t: 2, a: B.RULES[run.rule].name, b: B.RULES[run.rule].desc };
           } else {
@@ -265,6 +272,9 @@
           }
           break;
         case "win": flash = 1; flashCol = "#ffd84a"; shake = 26; vib([50, 50, 50, 50, 200]); [523, 659, 784, 1047].forEach(function (f, i) { setTimeout(function () { tone(f, 0.3, "triangle", 0.08); }, i * 120); }); for (var i = 0; i < 6; i++) burst(Math.random() * W, 300 + Math.random() * 500, ["#ffd84a", "#ff3d8b", "#3fd4ff"][i % 3], 20, 500); break;
+        case "skill": toast(e.name); tone(740, 0.08, "square", 0.04); break;
+        case "life": if (e.n >= 0) toast(e.n > 0 ? "还剩 " + e.n + " 条命" : "没有命了"); break;
+        case "shield": toast("护底挡住了"); break;
         case "lose": tone(300, 0.5, "sawtooth", 0.07, 80); vib(200); shake = 18; break;
       }
     });
@@ -274,14 +284,30 @@
 
   // ---------- input ----------
   var activeId = null;
+  var paddleDrag = false;
   cv.addEventListener("pointerdown", function (e) {
     e.preventDefault(); audio();
     if (!run) return;
+    if (run.paddle && (run.phase === "paddle" || run.phase === "launch")) {
+      paddleDrag = true; activeId = e.pointerId;
+      try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+      B.paddleMove(run, toLogical(e).x);
+      if (run.skill === "laser") B.paddleFire(run);
+      return;
+    }
     if (run.phase === "aim") { activeId = e.pointerId; try { cv.setPointerCapture(e.pointerId); } catch (x) {} aiming = true; aimFrom(toLogical(e)); }
     else if (run.phase === "fly") { fast = !fast; }
   }, { passive: false });
-  cv.addEventListener("pointermove", function (e) { if (aiming && e.pointerId === activeId) { e.preventDefault(); aimFrom(toLogical(e)); } }, { passive: false });
+  cv.addEventListener("pointermove", function (e) {
+    if (paddleDrag && run && run.paddle && e.pointerId === activeId) { e.preventDefault(); B.paddleMove(run, toLogical(e).x); return; }
+    if (aiming && e.pointerId === activeId) { e.preventDefault(); aimFrom(toLogical(e)); }
+  }, { passive: false });
   function release(e) {
+    if (paddleDrag && e.pointerId === activeId) {
+      paddleDrag = false; activeId = null;
+      if (run && run.paddle && run.phase === "launch") B.paddleLaunch(run);
+      return;
+    }
     if (!aiming || e.pointerId !== activeId) return;
     aiming = false; activeId = null;
     if (e.type === "pointerup" && aimPt && aimPt.ok && run.phase === "aim") {
@@ -362,8 +388,27 @@
       }
       ctx.restore();
     });
-    // aim
-    if (run.phase === "aim") {
+    // aim / paddle
+    if (run.paddle) {
+      var pw = B.paddleWidth(run), py = B.PADDLE_Y || 1168;
+      ctx.save();
+      ctx.shadowColor = run.skill === "short" ? "#ff8aa0" : run.skill === "slow" ? "#d7e6ff" : "#ffd84a";
+      ctx.shadowBlur = 18;
+      rr(run.paddleX - pw / 2, py, pw, 22, 11);
+      ctx.fillStyle = run.skill === "short" ? "#ff8aa0" : run.skill === "slow" ? "#d7e6ff" : "#ffd84a";
+      ctx.fill();
+      ctx.restore();
+      if (run.capsule && B.SKILLS[run.capsule.id]) {
+        var cap = run.capsule, skn = B.SKILLS[cap.id];
+        ctx.save(); ctx.shadowColor = "#3fd4ff"; ctx.shadowBlur = 14;
+        rr(cap.x - 46, cap.y - 16, 92, 32, 16); ctx.fillStyle = "rgba(12,10,22,0.92)"; ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = "#3fd4ff"; ctx.stroke();
+        txt(skn.name, cap.x, cap.y, 16, "#3fd4ff");
+        ctx.restore();
+      }
+      if (run.lasers) run.lasers.forEach(function (L) { ctx.fillStyle = "#ff6b8a"; ctx.fillRect(L.x - 3, L.y - 18, 6, 28); });
+      if (run.phase === "launch") txt("松手发出", W / 2, py + 48, 20, "#ffd84a");
+    } else if (run.phase === "aim") {
       if (aiming && aimPt && aimPt.ok) {
         var pts = B.preview(run, aimA, run.sight);
         ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 4; ctx.setLineDash([2, 14]); ctx.lineCap = "round";
@@ -451,10 +496,14 @@
     var st = B.isBossStage(run.stage) ? ("BOSS · 第 " + run.stage + " 关") : ("第 " + run.stage + " 关");
     txt(st, 24, 36, 30, B.isBossStage(run.stage) ? "#ff3d8b" : "#fff", "left", "900");
     txt("¥ " + run.coins, W - 24, 36, 30, "#ffcc33", "right", "900");
-    txt("● " + run.balls, W - 140, 36, 28, "#e6e0ff", "right");
-    // shots pips
-    var n = run.shotsLeft; for (var i = 0; i < Math.max(n, 0); i++) { ctx.beginPath(); ctx.arc(250 + i * 26, 36, 9, 0, 6.283); ctx.fillStyle = "#ffd84a"; ctx.fill(); }
-    txt("发", 250 + Math.max(n, 0) * 26 + 4, 37, 20, "#8e85b8", "left");
+    if (run.paddle) {
+      var lh = run.lives || 0;
+      for (var hi = 0; hi < lh; hi++) txt("♥", 230 + hi * 28, 36, 24, "#ff5a7a", "left", "900");
+    } else {
+      txt("● " + run.balls, W - 140, 36, 28, "#e6e0ff", "right");
+      var n = run.shotsLeft; for (var i = 0; i < Math.max(n, 0); i++) { ctx.beginPath(); ctx.arc(250 + i * 26, 36, 9, 0, 6.283); ctx.fillStyle = "#ffd84a"; ctx.fill(); }
+      txt("发", 250 + Math.max(n, 0) * 26 + 4, 37, 20, "#8e85b8", "left");
+    }
     // Only show boss bar when bossRule is set (v6: stage++ happens before pick/startStage;
     // accessing BOSS_RULES[null] previously crashed the rAF loop → balls "vanished")
     if (B.isBossStage(run.stage) && run.bossRule && B.BOSS_RULES[run.bossRule]) {
@@ -467,18 +516,27 @@
       var pr = Math.min(1, run.score / Math.max(1, run.threshold));
       rr(24, 76, W - 48, 34, 17); ctx.fillStyle = "#26213d"; ctx.fill();
       rr(24, 76, Math.max(34, (W - 48) * pr), 34, 17); ctx.fillStyle = pr >= 1 ? "#39e58c" : "#ff7a3d"; ctx.fill();
-      txt(B.fmtScore(run.score) + " / " + B.fmtScore(run.threshold) + (pr >= 1 ? " ✓" : ""), W / 2, 94, 22, "#fff");
+      txt(run.paddle ? (B.fmtScore(run.score) + (pr >= 1 ? "  奖励线已过" : "  / " + B.fmtScore(run.threshold))) : (B.fmtScore(run.score) + " / " + B.fmtScore(run.threshold) + (pr >= 1 ? " ✓" : "")), W / 2, 94, 22, "#fff");
     }
     var cards = Object.keys(run.cards).filter(function (k) { return B.CARDS[k].kind !== "up"; }).map(function (k) { return B.CARDS[k].icon; }).join(" ");
     var hx = 24;
-    if (run.randomMode && run.rule && B.RULES[run.rule]) {
+    if (run.paddle && run.skill && B.SKILLS[run.skill] && run.skillT > 0) {
+      txt(B.SKILLS[run.skill].name + " " + Math.ceil(run.skillT) + "s", W - 24, 128, 18, run.skill === "short" ? "#ff8aa0" : "#9ecbff", "right", "800");
+    }
+    if (run.paddle && run.shapeName) {
+      var sn = "「" + run.shapeName + "」";
+      txt(sn, hx, 128, 18, "#ffd84a", "left", "800");
+      ctx.font = "800 18px system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif";
+      hx += ctx.measureText(sn).width + 10;
+    }
+    if (run.randomMode && run.rule && B.RULES[run.rule] && !(run.paddle && run.shapeName)) {
       var rn = "「" + B.RULES[run.rule].name + "」";
       txt(rn, hx, 128, 18, "#ffd84a", "left", "800");
       ctx.font = "800 18px system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif";
       hx += ctx.measureText(rn).width + 14;
     }
     if (cards) txt(cards, hx, 128, 18, "#c9c2e8", "left");
-    txt("总分 " + run.total.toLocaleString(), W - 24, 128, 18, "#8e85b8", "right");
+    if (!(run.paddle && run.skill && run.skillT > 0)) txt("总分 " + run.total.toLocaleString(), W - 24, 128, 18, "#8e85b8", "right");
   }
   function drawTutorial() {
     var t = (performance.now() / 1000) % 2.2, k = Math.min(1, t / 1.4);
@@ -502,7 +560,8 @@
     var dt = Math.min(0.05, (t - (lastT || t)) / 1000); lastT = t;
     try {
       if (run) {
-        if (run.phase === "fly") { var sp = fast ? 3 : run.shotT > 6 ? 2 : 1; B.update(run, dt * sp); }
+        if (run.paddle && (run.phase === "paddle" || run.phase === "launch")) B.update(run, dt);
+        else if (run.phase === "fly") { var sp = fast ? 3 : run.shotT > 6 ? 2 : 1; B.update(run, dt * sp); }
         drain();
         if (run.phase !== prevPhase) {
           if (run.phase === "decide") { $("decCoins").textContent = 3 * run.shotsLeft; $("decTxt").innerHTML = "还剩 " + run.shotsLeft + " 发。现在过关，每发换 3 金币；<br>或者继续打，冒着砖块压低的风险刷更多分。"; $("decide").classList.remove("hidden"); }

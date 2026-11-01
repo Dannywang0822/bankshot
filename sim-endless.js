@@ -29,7 +29,7 @@ console.log("BS", BS.VERSION);
 const asserts = [];
 function ok(c, m) { asserts.push([!!c, m]); if (!c) console.error("FAIL", m); }
 
-ok(BS.VERSION === "8", "v8");
+ok(BS.VERSION === "9", "v9");
 ok(BS.threshold({ cards: {} }, 7) === 0, "boss thr 0");
 ok(BS.threshold({ cards: {} }, 8) < 5000, "stage8 soft");
 ok(BS.threshold({ cards: {} }, 1000) < 200000, "stage1000 softcap");
