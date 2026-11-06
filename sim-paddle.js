@@ -3,7 +3,40 @@ const BS = require("./core.js");
 const asserts = [];
 function ok(c, m) { asserts.push([!!c, m]); if (!c) console.error("FAIL", m); }
 
-ok(BS.VERSION === "9", "v9");
+ok(BS.VERSION === "10", "v10");
+ok(BS.PADDLE_Y === BS.LINE_Y + 48, "paddle sits 48px under the red line");
+ok(BS.PADDLE_Y > BS.LINE_Y && BS.PADDLE_Y < BS.H - 80, "paddle below the fail line and off the bottom edge");
+{
+  const lay = BS.newRun("layout", { paddle: true });
+  const ball = lay.flying[0];
+  const ballTop = ball.y - BS.R;
+  const lastBrickBottom = BS.LINE_Y - 4;
+  ok(ball.y > BS.LINE_Y && ball.y + BS.R <= BS.PADDLE_Y, "resting ball is between the line and the paddle");
+  ok(ballTop > lastBrickBottom && ballTop > BS.LINE_Y, "resting ball clears the last brick row and the dashed line");
+}
+{
+  const hit = BS.newRun("hit", { paddle: true });
+  BS.paddleLaunch(hit);
+  const hb = hit.flying[0];
+  hb.x = hit.paddleX;
+  hb.y = BS.PADDLE_Y - BS.R - 1;
+  hb.vx = 0;
+  hb.vy = 700;
+  hit.phase = "paddle";
+  BS.update(hit, 1 / 30);
+  ok(hb.vy < 0 && hit.lives === 3, "paddle still returns a ball that reaches it");
+  const miss = BS.newRun("miss", { paddle: true });
+  BS.paddleLaunch(miss);
+  const mb = miss.flying[0];
+  mb.x = 30;
+  mb.y = BS.PADDLE_Y + 60;
+  mb.vx = 0;
+  mb.vy = 400;
+  miss.paddleX = BS.W / 2;
+  miss.phase = "paddle";
+  BS.update(miss, 1 / 20);
+  ok(miss.lives === 2 && miss.phase !== "over", "a ball past the paddle still costs one life");
+}
 const classic = BS.newRun("s0", { safety: false });
 ok(!classic.paddle && classic.threshold === 50 && classic.balls === 3 && classic.phase === "aim", "classic stage1 unchanged");
 
@@ -62,7 +95,7 @@ BS.paddleLaunch(sk);
   const before = sk.bricks.length;
   try {
     // giveSkill is internal; drive it by planting a capsule and catching it
-    sk.capsule = { x: sk.paddleX, y: (BS.PADDLE_Y || 1168) - 2, id: id, vy: 0 };
+    sk.capsule = { x: sk.paddleX, y: BS.PADDLE_Y - 2, id: id, vy: 0 };
     sk.phase = "paddle";
     if (!sk.flying.length) BS.paddleLaunch(sk);
     BS.update(sk, 1 / 30);

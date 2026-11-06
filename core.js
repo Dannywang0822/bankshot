@@ -1004,7 +1004,11 @@
     return Math.round(n).toLocaleString("en-US");
   }
 
-  var PADDLE_Y = 1168, PADDLE_H = 22;
+  var PADDLE_H = 22;
+  // Just under the red dashed fail line (was 1168, near the canvas bottom).
+  // 48px leaves the dashes readable above a resting ball and its glow, keeps
+  // that ball clear of the last brick row, and is too small to play as a dead zone.
+  var PADDLE_Y = LINE_Y + 48;
   var SKILLS = {
     multi:  { name: "分身", kind: "good", desc: "临时再出 2 颗球，掉多余的不扣命" },
     power:  { name: "重击", kind: "good", desc: "12 秒内每下伤害 +1", t: 12 },
@@ -1528,6 +1532,6 @@
     threshold: threshold, buildTrapBoard: buildTrapBoard, keystoneOf: keystoneOf, isSealed: isSealed, refreshBoard: refreshBoard,
     isBossStage: isBossStage, softCap: softCap, ruleAt: ruleAt, unlockedRules: unlockedRules,
     attainableScore: attainableScore, stageGoal: stageGoal, paddleMove: paddleMove, paddleLaunch: paddleLaunch, paddleFire: paddleFire, paddleWidth: paddleWidth,
-    SKILLS: SKILLS, PADDLE_RULES: PADDLE_RULES, gateRoll: gateRoll, PADDLE_Y: PADDLE_Y, VERSION: "9" };
+    SKILLS: SKILLS, PADDLE_RULES: PADDLE_RULES, gateRoll: gateRoll, PADDLE_Y: PADDLE_Y, VERSION: "10" };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BS = API;
 })(this);

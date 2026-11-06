@@ -49,7 +49,7 @@ function ok(c, m) {
 }
 
 console.log("BS", BS.VERSION, "patterns", BS.PATTERNS.length);
-ok(BS.VERSION === "9", "VERSION 9");
+ok(BS.VERSION === "10", "VERSION 10");
 ok(BS.PATTERNS.length >= 15, "pattern catalog >= 15");
 
 // --- generate milestone stages ---

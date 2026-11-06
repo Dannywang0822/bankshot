@@ -2,7 +2,7 @@
 
 默认是**弹球模式**：底部挡板左右拖，一颗球，3 条命，清完图案过关。开始屏可切回**经典模式**（原来的回合制瞄准）。两种模式最高分分开存。
 
-在线玩：https://dannywang0822.github.io/bankshot/?v=9
+在线玩：https://dannywang0822.github.io/bankshot/?v=10
 
 ```bash
 node sim.js smart 10    # 经典平衡
