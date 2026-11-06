@@ -390,7 +390,7 @@
     });
     // aim / paddle
     if (run.paddle) {
-      var pw = B.paddleWidth(run), py = B.PADDLE_Y || 1168;
+      var pw = B.paddleWidth(run), py = B.PADDLE_Y;
       ctx.save();
       ctx.shadowColor = run.skill === "short" ? "#ff8aa0" : run.skill === "slow" ? "#d7e6ff" : "#ffd84a";
       ctx.shadowBlur = 18;
